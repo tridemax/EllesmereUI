@@ -237,10 +237,10 @@ local function ExitAssignSelectMode()
         coin:SetFrameStrata(EUI_Bags:GetFrameStrata())
         coin:SetFrameLevel(coin:GetParent():GetFrameLevel() + 1)
     end
-    -- Marks repainted only their own slots: sort them into place now (an open
-    -- bank greys and regroups its copies too)
-    if wasJunk and EUI_Bags._junkDirty then
+    -- Restore grouping even without mark edits; a hidden bag repaints on show.
+    if wasJunk and (EUI_Bags._junkDirty or wasJunk == "sell") then
         EUI_Bags._junkDirty = nil
+        EUI_Bags._junkRefreshPending = true
         if EUI_Bags:IsShown() then EUI_Bags:RefreshInventory() end
         ns.RefreshOpenBank()
     end
@@ -301,6 +301,11 @@ EnterAssignSelectMode = function(catKey, junk)
     EUI_Bags._assignSelectMode = true
     EUI_Bags._junkMode = junk or nil
     _assignSelectCatKey = catKey
+    if junk == "sell" then
+        -- Select real stacks; a merged icon may represent several different items.
+        EUI_Bags._junkDirty = true
+        EUI_Bags:RefreshInventory()
+    end
 
     local cacheKey = junk and "_assignOverlayBag" or "_assignOverlayFull"
     if not EUI_Bags[cacheKey] then
@@ -426,7 +431,16 @@ EnterAssignSelectMode = function(catKey, junk)
                         if junkMode then
                             -- Only the item's own slots repaint, so nothing moves under
                             -- the cursor; the bag sorts the marks when the mode ends
-                            EUI_CategoryManager:ToggleJunk(info.itemID)
+                            if junkMode == "sell" then
+                                local ok, reason = EUI_CategoryManager:ToggleSellOnce(bagID, slotID)
+                                if not ok then
+                                    if reason then EUI.ShowWidgetTooltip(btn, reason) end
+                                    return
+                                end
+                            else
+                                EUI_CategoryManager:ClearSellOnce(EUI_CategoryManager:GetSlotGUID(bagID, slotID))
+                                EUI_CategoryManager:ToggleJunk(info.itemID)
+                            end
                             ns.RepaintJunkItem(info.itemID)
                             EUI_Bags._junkDirty = true
                         else
@@ -482,7 +496,9 @@ local function BuildButtons()
     junk.icon:SetAlpha(0.9)
     junk:SetScript("OnEnter", function(self)
         self.icon:SetAlpha(1)
-        EUI.ShowWidgetTooltip(self, EllesmereUI.L("Click items to mark or unmark them as junk."))
+        EUI.ShowWidgetTooltip(self, EUI.IS_FOREVER
+            and EllesmereUI.L("Click: mark or unmark individual items to sell once. Ctrl-click: mark or unmark item types as permanent junk. Click again or press Esc to finish.")
+            or EllesmereUI.L("Click items to mark or unmark them as junk."))
     end)
     junk:SetScript("OnLeave", function(self)
         self.icon:SetAlpha(0.9)
@@ -493,10 +509,27 @@ local function BuildButtons()
         -- Mark mode on: the coin ends it
         if EUI_Bags._junkMode then ExitAssignSelectMode(); return end
         if InCombatLockdown() then return end
+        local sellOnce = EUI.IS_FOREVER and not IsControlKeyDown()
         -- An item on the cursor: mark or unmark that one
         local cursorType, itemID = GetCursorInfo()
         if cursorType == "item" and itemID then
-            EUI_CategoryManager:ToggleJunk(itemID)
+            if sellOnce then
+                -- The carried item still belongs to its bag slot, which names the instance
+                local loc = C_Cursor and C_Cursor.GetCursorItem and C_Cursor.GetCursorItem()
+                local bag, slot
+                if loc and loc:IsBagAndSlot() then bag, slot = loc:GetBagAndSlot() end
+                if not bag then
+                    EUI.ShowWidgetTooltip(self, EllesmereUI.L("Only items from your bags can be marked for a one-time sale."))
+                    return
+                end
+                local ok, reason = EUI_CategoryManager:ToggleSellOnce(bag, slot)
+                if not ok then
+                    EUI.ShowWidgetTooltip(self, reason)
+                    return
+                end
+            else
+                EUI_CategoryManager:ToggleJunk(itemID)
+            end
             ClearCursor()
             EUI_Bags:RefreshInventory()
             ns.RefreshOpenBank()
@@ -505,10 +538,12 @@ local function BuildButtons()
         -- Controller cursor on screen: mark mode hit-tests the hidden
         -- pointer, so explain the carry-then-press path instead.
         if EUI.PadCursorShown() then
-            EUI.ShowWidgetTooltip(self, EllesmereUI.L("Pick up an item, then press the coin to mark it as junk"))
+            EUI.ShowWidgetTooltip(self, sellOnce
+                and EllesmereUI.L("Pick up an item, then press the coin to mark it for a one-time sale")
+                or EllesmereUI.L("Pick up an item, then press the coin to mark it as junk"))
             return
         end
-        EnterAssignSelectMode(EUI_CategoryManager.JUNK_KEY, true)
+        EnterAssignSelectMode(EUI_CategoryManager.JUNK_KEY, sellOnce and "sell" or true)
     end)
     -- A double-click is one press: its second click runs this instead of
     -- OnClick, which would end the mode the first click started
@@ -566,6 +601,13 @@ function EUI_Bags:SyncHeaderIcons()
     else
         EUI_BagsWindow:Hide()  -- opened only from Show Bags
     end
+    local merge = self._mergeBtn
+    if merge then
+        merge:ClearAllPoints()
+        merge:SetPoint("RIGHT", prev, "LEFT", -gap, 0)
+        self:SyncMergeButton()
+        prev, gap = merge, 6
+    end
     -- Quick Actions (EllesmereUIBags_QuickActions.lua), off by default
     local quick = ns.SyncQuickActionsIcon(prev, gap)
     if quick then prev, gap = quick, 6 end
@@ -601,27 +643,21 @@ end
 -- refundable (Blizzard's own right-click never sells those without asking, and
 -- a fresh purchase of a marked item would otherwise go unasked). Returns how
 -- many junk items it kept back (the summary counts them as not sold).
-local function GatherJunkSlots(slots, ids)
+local function GatherJunkSlots(slots, ids, guids, setGear)
     local special = ns.SpecialBags()
-    local setGear = EUI_CategoryManager:GetSetGearLookup()
     local pinned = PinnedItems()
     local kept = 0
     for bag = 0, 5 do
         if not (special and special[bag]) then
             for slot = 1, C_Container.GetContainerNumSlots(bag) or 0 do
                 local info = C_Container.GetContainerItemInfo(bag, slot)
-                if info and info.itemID and EUI_CategoryManager:IsJunk(info.itemID, info.quality) then
-                    local keep = info.hasNoValue or setGear[bag * 1000 + slot]
-                        or (pinned and IsItemPinned(pinned, info.hyperlink, info.itemID))
-                    if not keep then
-                        local p = C_Container.GetContainerItemPurchaseInfo(bag, slot, false)
-                        keep = p and p.refundSeconds and p.refundSeconds > 0
-                    end
-                    if keep then
+                if info and info.itemID and EUI_CategoryManager:IsJunk(info.itemID, info.quality, bag, slot) then
+                    if EUI_CategoryManager:SaleBlocker(bag, slot, info, setGear, pinned) then
                         kept = kept + 1
                     else
                         slots[#slots + 1] = bag * 1000 + slot
                         ids[#ids + 1] = info.itemID
+                        guids[#slots] = EUI_CategoryManager:GetSlotGUID(bag, slot)
                     end
                 end
             end
@@ -640,11 +676,17 @@ end
 function EUI_Bags:SellJunk(force)
     if self._junkSelling or InCombatLockdown() or not (force or _openItemPanels.merchant) then return end
     self._junkSelling = true
-    local slots, ids, values, sent = {}, {}, {}, {}
-    local kept = GatherJunkSlots(slots, ids)
+    EUI_CategoryManager:PruneSellOnce()
+    -- Built once per sweep: every bag refresh rebuilds this same table in place
+    local setGear = EUI_CategoryManager:GetSetGearLookup()
+    local slots, ids, guids, values, sent = {}, {}, {}, {}, {}
+    local kept = GatherJunkSlots(slots, ids, guids, setGear)
     local i, done = 0, false
     local function Landed(k)
         local key = slots[k]
+        if guids[k] then
+            return EUI_CategoryManager:GetSlotGUID(math.floor(key / 1000), key % 1000) ~= guids[k]
+        end
         return C_Container.GetContainerItemID(math.floor(key / 1000), key % 1000) ~= ids[k]
     end
     local function InFlight()
@@ -667,7 +709,11 @@ function EUI_Bags:SellJunk(force)
         EUI_Bags._junkSelling = nil
         local sold, earned = 0, 0
         for n = 1, #sent do
-            if Landed(sent[n]) then sold, earned = sold + 1, earned + values[sent[n]] end
+            local k = sent[n]
+            if Landed(k) then
+                sold, earned = sold + 1, earned + values[k]
+                EUI_CategoryManager:FinishSellOnce(guids[k])
+            end
         end
         -- Not sold: the junk kept back (no sell price, equipment sets, pins,
         -- refundable), and a gathered slot still holding its item (a sale
@@ -710,7 +756,10 @@ function EUI_Bags:SellJunk(force)
             local bag, slot = math.floor(key / 1000), key % 1000
             local info = C_Container.GetContainerItemInfo(bag, slot)
             -- Still the gathered item, and not locked
-            if info and info.itemID == ids[i] and not info.isLocked then
+            if info and info.itemID == ids[i] and not info.isLocked
+                and (not guids[i] or EUI_CategoryManager:GetSlotGUID(bag, slot) == guids[i])
+                and EUI_CategoryManager:IsJunk(info.itemID, info.quality, bag, slot)
+                and not EUI_CategoryManager:SaleBlocker(bag, slot, info, setGear, PinnedItems()) then
                 values[i] = ((info.hyperlink and select(11, GetItemInfo(info.hyperlink))) or 0) * (info.stackCount or 1)
                 sent[#sent + 1] = i
                 C_Container.UseContainerItem(bag, slot)

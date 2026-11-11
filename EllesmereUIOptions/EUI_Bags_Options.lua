@@ -1333,6 +1333,7 @@ initFrame:SetScript("OnEvent", function(self)
                 EllesmereUIDB.bagPinsPerCharacter = nil
                 EllesmereUIDB.bagItemAssignments = nil
                 EllesmereUIDB.bagJunkPrev = nil
+                EllesmereUIDB.bagSellOnceByChar = nil
                 -- Legacy gold stores: they stay on disk until a gold module loads and absorbs them.
                 EllesmereUIDB.characterGold = nil
                 EllesmereUIDB.dataBarsGold = nil

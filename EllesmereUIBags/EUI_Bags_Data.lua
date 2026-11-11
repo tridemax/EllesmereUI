@@ -444,7 +444,7 @@ local function MergeDuplicates(items)
     -- Record what this paint was built with, so the bags OnShow can tell that
     -- the state changed while they were hidden and repaint (see OnShow).
     SetPaintedPanelOpen(_anyItemPanelOpen)
-    if _anyItemPanelOpen or BP().bagMergeDuplicates == false then return items end
+    if _anyItemPanelOpen or BP().bagMergeDuplicates == false or EUI_Bags._junkMode == "sell" then return items end
     -- Session-only unmerge marks (EUI_Bags._unmergedLinks: set by the split
     -- dialog, wiped when the bags close, never persisted): a marked item keeps
     -- its real stacks apart so a split's pieces are visible in these views.
@@ -456,7 +456,7 @@ local function MergeDuplicates(items)
     local out = {}
     for _, data in ipairs(items) do
         local key = data.itemLink
-        if key and not IsGearCategory(data.categoryIndex or 0) and not (unmerged and unmerged[key]) then
+        if key and not data._sellOnce and not IsGearCategory(data.categoryIndex or 0) and not (unmerged and unmerged[key]) then
             local idx = seen[key]
             if idx then
                 local prev = out[idx]

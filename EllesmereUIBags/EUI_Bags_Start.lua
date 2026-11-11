@@ -176,7 +176,7 @@ local function StartAddon()
         -- IsVisible, and closing a mailbox hides bags in the same breath so that repaint is thrown away (costs one boolean compare when already matching).
         -- Same for session unmerge marks: the close that hid the bags wiped
         -- them, so a layout painted with marks must merge again on show.
-        if _paintedPanelOpen ~= _anyItemPanelOpen or EUI_Bags._paintedUnmerged then
+        if _paintedPanelOpen ~= _anyItemPanelOpen or EUI_Bags._paintedUnmerged or EUI_Bags._junkRefreshPending then
             EUI_Bags:RefreshInventory()
         end
         -- Controller cursor: scroll aids and the carried-item drop button,
@@ -994,6 +994,8 @@ local function StartAddon()
             if EUI_Bags:IsVisible() then ScheduleRefresh() end
             return
         end
+        -- BAG_UPDATE's argument is the bag; returns at once while nothing is marked
+        if event == "BAG_UPDATE" then EUI_CategoryManager:ClampSellOnce(interactionType) end
         if event == "BAG_UPDATE" and EUI_Bags.refreshEnabled ~= false and not _detectQueued then
             _detectQueued = true
             C_Timer.After(0, _DetectFlush)

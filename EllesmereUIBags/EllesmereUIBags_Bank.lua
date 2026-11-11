@@ -2625,7 +2625,7 @@ function EUI_Bank:RefreshBank()
             btn:SetItemButtonCount(info.stackCount)
             local quality = info.quality or 1
             SetItemButtonDesaturated(btn, info.isLocked or (desatJunk and (quality == 0
-                or (junkOn and _G.EUI_CategoryManager:IsJunk(info.itemID, quality)))) or false)
+                or (junkOn and _G.EUI_CategoryManager:IsJunk(info.itemID, quality, bagID, slot)))) or false)
             local itemLink = C_Container.GetContainerItemLink(bagID, slot)
             if itemLink then btn:SetItemButtonQuality(quality, itemLink, false, false) end
             if btn.ProfessionQualityOverlay and btn.ProfessionQualityOverlay:IsShown() and btn._textOverlay then

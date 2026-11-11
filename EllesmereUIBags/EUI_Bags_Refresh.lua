@@ -452,7 +452,11 @@ ns.OnSlotMetrics(function(m)
     if EUI_BagsWindow:IsShown() and EUI_BagsWindow.RefreshBags then EUI_BagsWindow:RefreshBags() end
 end)
 
-local function FormatSlots(used, total, reagent, format)
+local function FormatSlots(used, total, reagent, format, compact)
+    if compact then
+        local value = (format == "free" or format == "free_total") and (total - used) or used
+        return format == "free" and tostring(value) or string.format("%d/%d", value, total)
+    end
     if format == "free" then
         if reagent then return EllesmereUI.Lf("%d Reagent slots free", total - used) end
         return EllesmereUI.Lf("%d Slots free", total - used)
@@ -534,20 +538,25 @@ local function FinishRefresh(curY, gridContentW, sidebarW, regularUsed, regularT
     if EUI_Bags.Header and EUI_Bags.Header.itemCount then
         -- Optional capacity formats count physical slots, not filtered items.
         local format = BP().bagSlotCountFormat
-        local separate = not EllesmereUI.IS_FOREVER and BP().bagSeparateReagentSlots == true
+        -- WoW Forever always splits off the reagent bag, on one line; a category
+        -- view there still counts its items.
+        local compact = EllesmereUI.IS_FOREVER and reagentTotal > 0
+        local separate = compact or (not EllesmereUI.IS_FOREVER and BP().bagSeparateReagentSlots == true)
         local countText
-        if not separate and format ~= "free" and format ~= "free_total"
+        if (compact or not separate) and format ~= "free" and format ~= "free_total"
             and selectedCategoryIndex ~= 0 and selectedCategoryIndex ~= -1 and selectedCategoryIndex ~= -2 then
             countText = EllesmereUI.Lf("%d Items", totalCount)
         elseif separate then
-            countText = FormatSlots(regularUsed, regularTotal, false, format)
+            countText = FormatSlots(regularUsed, regularTotal, false, format, compact)
             if reagentTotal > 0 then
-                countText = countText .. "\n" .. FormatSlots(reagentUsed, reagentTotal, true, format)
+                countText = countText .. (compact and ", " or "\n")
+                    .. FormatSlots(reagentUsed, reagentTotal, true, format, compact)
             end
         else
             countText = FormatSlots(regularUsed + reagentUsed, regularTotal + reagentTotal, false, format)
         end
         EUI_Bags.Header.itemCount:SetText(countText)
+        if ns.BagsForever() then ns.FitForeverBagCount(EUI_Bags.Header.title, EUI_Bags.Header.itemCount) end
     end
 
     UpdateBagMoneyDisplay()
@@ -561,6 +570,8 @@ end
 
 function EUI_Bags:RefreshInventory()
     if not EUI_Bags:IsVisible() then return end
+    self._junkRefreshPending = nil
+    self:SyncMergeButton()
     ns.ApplySlotMetrics()
 
     -- A select mode's hover box sits on a button this refresh may refill: put
@@ -762,7 +773,7 @@ function EUI_Bags:RefreshInventory()
     local showRecent = BP().bagShowRecentItems ~= false
     if recentCatIdx and EUI_Bags._recentItems and showRecent then
         for _, data in ipairs(tempItems) do
-            if not data._pinnedOnly and data.info and data.info.itemID and EUI_Bags._recentItems[data.info.itemID] then
+            if not data._pinnedOnly and not data._isJunk and data.info and data.info.itemID and EUI_Bags._recentItems[data.info.itemID] then
                 recentCount = recentCount + 1
             end
         end
@@ -816,7 +827,7 @@ function EUI_Bags:RefreshInventory()
         if offlineUp then
             show = false  -- the offline panel covers these
         elseif isRecentView then
-            show = data.info and data.info.itemID and EUI_Bags._recentItems and EUI_Bags._recentItems[data.info.itemID]
+            show = not data._isJunk and data.info and data.info.itemID and EUI_Bags._recentItems and EUI_Bags._recentItems[data.info.itemID]
         elseif isPinnedView then
             show = data.info and data.info.itemID and pinnedSet and IsItemPinned(pinnedSet, data.itemLink, data.info.itemID)
         elseif filterSet then

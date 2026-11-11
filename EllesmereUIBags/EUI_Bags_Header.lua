@@ -25,6 +25,16 @@ I.categoryIndexSetters[#I.categoryIndexSetters + 1] = function(v) selectedCatego
 -------------------------------------------------------------------------------
 --  UI Components -- Header
 -------------------------------------------------------------------------------
+function EUI_Bags:SyncMergeButton()
+    local button = self._mergeBtn
+    if not button then return end
+    if BP().bagMergeDuplicates ~= false then
+        button.icon:SetVertexColor(0.05, 0.82, 0.62)
+    else
+        button.icon:SetVertexColor(0.8, 0.8, 0.8)
+    end
+end
+
 -- Fits the title and item count between their start and the leftmost header icon
 -- (SyncHeaderIcons): the count truncates first, then the title, both with "...".
 function EUI_Bags:FitHeaderText()
@@ -729,6 +739,33 @@ local function CreateHeader()
         end
     end)
     EUI_Bags._bagsBtn = bagsBtn
+    if EUI.IS_FOREVER then
+        local merge = CreateFrame("Button", nil, header)
+        merge:SetSize(24, 24)
+        merge.icon = merge:CreateTexture(nil, "ARTWORK")
+        merge.icon:SetSize(18, 18)
+        merge.icon:SetPoint("CENTER")
+        merge.icon:SetTexture("Interface\\AddOns\\EllesmereUI\\media\\icons\\grid.png")
+        merge.icon:SetAlpha(0.9)
+        merge:SetScript("OnEnter", function(self)
+            self.icon:SetAlpha(1)
+            EUI.ShowWidgetTooltip(self, BP().bagMergeDuplicates ~= false
+                and EllesmereUI.L("Separate Duplicate Items") or EllesmereUI.L("Merge Duplicate Items"))
+        end)
+        merge:SetScript("OnLeave", function(self)
+            self.icon:SetAlpha(0.9)
+            EUI.HideWidgetTooltip()
+        end)
+        merge:SetScript("OnClick", function()
+            EUI.HideWidgetTooltip()
+            local p = BP()
+            p.bagMergeDuplicates = p.bagMergeDuplicates == false
+            EUI_Bags:SyncMergeButton()
+            EUI_Bags:RefreshInventory()
+            EUI:RefreshPage()
+        end)
+        EUI_Bags._mergeBtn = merge
+    end
     EUI_Bags:SyncHeaderIcons()  -- places Sort / Show Bags / the coin (built only while on)
 
     local clear = CreateFrame("Button", nil, search)

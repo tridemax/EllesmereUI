@@ -779,7 +779,12 @@ function CategoryManager:ClassifyAll(items)
     local stampNames = BP().bagShowSetGearName == true
     for _, data in ipairs(items) do
         if data.info and data.itemLink then
-            local idx = self:ClassifyItem(data.itemLink, data.info.itemID, data.bag, data.slot, data.info.quality)
+            -- Read once per pass: the renderers use these stamps instead of the slot.
+            data._sellOnce = self:IsJunkMarkerEnabled() and self:IsSellOnce(data.info.itemID, data.bag, data.slot)
+            data._isJunk = data._sellOnce or self:IsJunk(data.info.itemID, data.info.quality)
+            -- A one-time sale overrides the item's normal category.
+            local idx = data._sellOnce and junkIdx
+                or self:ClassifyItem(data.itemLink, data.info.itemID, data.bag, data.slot, data.info.quality)
             if stampNames then
                 local sid = _setGearLookup[data.bag * 1000 + data.slot]
                 data._setName = sid and _setNames[sid] or nil
@@ -1152,14 +1157,22 @@ end
 
 -- Marked, or grey and not filed in another category (a grey quest item files as
 -- a quest item, so it is never junk unmarked). quality is optional.
-function CategoryManager:IsJunk(itemID, quality)
+function CategoryManager:IsJunk(itemID, quality, bag, slot)
     if not self:IsJunkMarkerEnabled() or not itemID then return false end
+    if bag ~= nil and self:IsSellOnce(itemID, bag, slot) then return true end
     local assignments = EllesmereUIDB and EllesmereUIDB.bagItemAssignments
     local assigned = assignments and assignments[itemID]
     if assigned == self.JUNK_KEY then return true end
     if assigned then return false end  -- filed into some other category
     if quality == nil then quality = select(3, C_Item.GetItemInfo(itemID)) end
     return quality == 0 and select(6, GetItemInfoInstant(itemID)) ~= IC_QUEST
+end
+
+-- An item list entry's junk state: ClassifyAll's stamp when it has one, else
+-- read from its slot.
+function CategoryManager:IsJunkData(data, quality)
+    if data._isJunk ~= nil then return data._isJunk end
+    return self:IsJunk(data.info.itemID, quality, data.bag, data.slot)
 end
 
 -- Flips an item's mark (a grey item stays junk unmarked). Marking remembers the
@@ -1183,6 +1196,154 @@ function CategoryManager:OnJunkChanged()
     local junkItems = EUI._JunkItems
     if junkItems then junkItems.Refresh() end
 end
+
+do -- One-time sale marks
+local CM = CategoryManager
+local location
+
+local function Marks(create)
+    if not EUI.IS_FOREVER then return end
+    if not create and not (EllesmereUIDB and EllesmereUIDB.bagSellOnceByChar) then return end
+    local owner = UnitGUID("player")
+    if not owner then return end
+    if not EllesmereUIDB then
+        if not create then return end
+        EllesmereUIDB = {}
+    end
+    local chars = EllesmereUIDB.bagSellOnceByChar
+    if not chars then
+        if not create then return end
+        chars = {}; EllesmereUIDB.bagSellOnceByChar = chars
+    end
+    if create and not chars[owner] then chars[owner] = {} end
+    return chars[owner]
+end
+
+-- A slot can move or be reused; only the item's identity authorizes its sale.
+function CM:GetSlotGUID(bag, slot)
+    if not EUI.IS_FOREVER or bag == nil or not slot or slot <= 0
+        or not C_Item.GetItemGUID then return end
+    if not location then location = ItemLocation:CreateFromBagAndSlot(bag, slot)
+    else location:SetBagAndSlot(bag, slot) end
+    if not C_Item.DoesItemExist(location) then return end
+    local guid = C_Item.GetItemGUID(location)
+    if issecretvalue and issecretvalue(guid) then return end
+    if type(guid) == "string" and guid ~= "" then return guid end
+end
+
+-- A mark covers at most the smallest size its stack has had since marking:
+-- items that refill a used or split stack were never marked. A locked stack
+-- may be mid-split, so its count is not final.
+local function Clamp(mark, info)
+    local count = info.stackCount or 1
+    if not info.isLocked and count < mark.count then mark.count = count end
+    return count <= mark.count
+end
+
+function CM:IsSellOnce(itemID, bag, slot)
+    local marks = Marks()
+    if not marks or not next(marks) then return false end
+    local guid = self:GetSlotGUID(bag, slot)
+    local mark = guid and marks[guid]
+    if not mark or mark.itemID ~= itemID then return false end
+    local info = C_Container.GetContainerItemInfo(bag, slot)
+    return info ~= nil and Clamp(mark, info)
+end
+
+-- BAG_UPDATE, shown bags or not: a marked stack that shrinks while the bags
+-- are closed must not regain its old size by a later refill.
+function CM:ClampSellOnce(bag)
+    local marks = Marks()
+    if not marks or not next(marks) or type(bag) ~= "number" then return end
+    for slot = 1, C_Container.GetContainerNumSlots(bag) or 0 do
+        local guid = self:GetSlotGUID(bag, slot)
+        local mark = guid and marks[guid]
+        if mark then
+            local info = C_Container.GetContainerItemInfo(bag, slot)
+            if info then Clamp(mark, info) end
+        end
+    end
+end
+
+-- Why Sell Junk keeps this item back, or nil: no sell price, an equipment
+-- set, a pin, or still refundable (Blizzard's own right-click never sells
+-- those without asking). setGear and pinned are the caller's lookups.
+function CM:SaleBlocker(bag, slot, info, setGear, pinned)
+    if info.hasNoValue then return EllesmereUI.L("This item has no sell price.") end
+    if setGear[bag * 1000 + slot] then return EllesmereUI.L("Items in an equipment set are never sold.") end
+    if pinned and ns.IsItemPinned(pinned, info.hyperlink, info.itemID) then
+        return EllesmereUI.L("Pinned items are never sold.")
+    end
+    local purchase = C_Container.GetContainerItemPurchaseInfo(bag, slot, false)
+    if purchase and purchase.refundSeconds and purchase.refundSeconds > 0 then
+        return EllesmereUI.L("This item can still be refunded. Sell it yourself.")
+    end
+end
+
+function CM:ToggleSellOnce(bag, slot)
+    local generic = EllesmereUI.L("This item cannot be marked for a one-time sale right now.")
+    local info = C_Container.GetContainerItemInfo(bag, slot)
+    local guid = self:GetSlotGUID(bag, slot)
+    if not info or not info.itemID or not guid then return false, generic end
+    local marks = Marks()
+    if marks and marks[guid] then
+        marks[guid] = nil
+    else
+        local assignments = EllesmereUIDB and EllesmereUIDB.bagItemAssignments
+        if assignments and assignments[info.itemID] == self.JUNK_KEY then
+            return false, EllesmereUI.L("This item is permanent junk. Ctrl-click the coin to unmark it first.")
+        end
+        -- A mark Sell Junk would skip on every visit would only park the item in Junk.
+        local blocked = self:SaleBlocker(bag, slot, info, self:GetSetGearLookup(), ns.PinnedItems and ns.PinnedItems())
+        if blocked then return false, blocked end
+        marks = Marks(true)
+        if not marks then return false, generic end
+        marks[guid] = { itemID = info.itemID, count = info.stackCount or 1 }
+    end
+    self:OnJunkChanged()
+    return true
+end
+
+function CM:ClearSellOnce(guid)
+    local marks = Marks()
+    if marks and guid and marks[guid] then
+        marks[guid] = nil
+        self:OnJunkChanged()
+    end
+end
+
+-- A moved item was not sold. Keep its mark if it is still in another bag slot.
+function CM:FinishSellOnce(guid)
+    local marks = Marks()
+    if not marks or not guid or not marks[guid] then return end
+    for bag = 0, 5 do
+        for slot = 1, C_Container.GetContainerNumSlots(bag) or 0 do
+            if self:GetSlotGUID(bag, slot) == guid then return end
+        end
+    end
+    self:ClearSellOnce(guid)
+end
+
+-- Run before each Sell Junk: marks of items no longer in the bags (sold by
+-- hand, used up, mailed, destroyed, merged into another stack, or banked) go,
+-- so the saved list never outgrows what is carried.
+function CM:PruneSellOnce()
+    local marks = Marks()
+    if not marks or not next(marks) then return end
+    local carried = {}
+    for bag = 0, 5 do
+        for slot = 1, C_Container.GetContainerNumSlots(bag) or 0 do
+            local guid = self:GetSlotGUID(bag, slot)
+            if guid then carried[guid] = true end
+        end
+    end
+    local pruned = false
+    for guid in pairs(marks) do
+        if not carried[guid] then marks[guid] = nil; pruned = true end
+    end
+    if pruned then self:OnJunkChanged() end
+end
+end -- One-time sale marks
 
 -- Equipment sets changed (created/renamed/deleted): drop the cached list so the
 -- next GetCategories rebuilds split-mode categories from the current sets.

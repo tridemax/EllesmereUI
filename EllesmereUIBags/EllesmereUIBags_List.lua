@@ -753,7 +753,7 @@ local function RenderRow(btn, data, cols, rowW, x, y, stripe, dim)
             icon:SetTexCoord(z, 1 - z, z, 1 - z)
             -- Junk Item Visuals' Desaturate greys grey items and Junk Marker junk
             icon:SetDesaturated(info.isLocked or (BP().bagDesaturateJunkItems == true
-                and (q == 0 or EUI_CategoryManager:IsJunk(info.itemID, q))) or false)
+                and (q == 0 or EUI_CategoryManager:IsJunkData(data, q))) or false)
             if EUI._BagsItemUnusable(data.bag, data.slot, data.itemLink, info.itemID) then
                 icon:SetVertexColor(1, 0.1, 0.1)
             else
@@ -825,7 +825,7 @@ ns.ListRows = _rows
 function ns.ListPaintJunk(btn, info)
     local q = info.quality or 1
     btn._lvIcon:SetDesaturated(info.isLocked or (BP().bagDesaturateJunkItems == true
-        and (q == 0 or EUI_CategoryManager:IsJunk(info.itemID, q))) or false)
+        and (q == 0 or EUI_CategoryManager:IsJunk(info.itemID, q, btn:GetParent():GetID(), btn:GetID()))) or false)
 end
 
 -- Re-pins each host's rows (the bags and the bank) after its level moved (ns.PinItemPool)
@@ -964,7 +964,7 @@ function ns.RenderListView(items, opts)
             if pinnedSet and ns.IsItemPinned(pinnedSet, d.itemLink, d.info.itemID) then
                 Add("pinned", "", d)
             end
-            if recentSet and recentSet[d.info.itemID] and not d._pinnedOnly then
+            if recentSet and recentSet[d.info.itemID] and not d._pinnedOnly and not d._isJunk then
                 Add("recent", "", d)
             end
             if opts.recentOnly then

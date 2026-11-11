@@ -97,22 +97,35 @@ function ns.LayoutForeverBagHeader(header, height)
     header:SetHeight((height or 54) - trim)
 end
 
+-- The item count's right inset, its usual width and its gap to the title
+local COUNT_RIGHT, COUNT_W, COUNT_GAP = 31, 85, 8
+
 function ns.SkinForeverBagTitle(title, count)
     local header = title:GetParent()
     local y = header._foreverTitleY
     title:ClearAllPoints()
     title:SetPoint("LEFT", header, "TOPLEFT", count and 55 or 40, y)
-    title:SetPoint("RIGHT", header, "TOPRIGHT", count and -124 or -30, y)
+    title:SetPoint("RIGHT", header, "TOPRIGHT", count and -(COUNT_RIGHT + COUNT_W + COUNT_GAP) or -30, y)
     title:SetJustifyH("CENTER")
     title:SetWordWrap(false)
     title:SetTextColor(1, 0.82, 0)
     if not count then return end
     count:ClearAllPoints()
-    count:SetPoint("RIGHT", header, "TOPRIGHT", -31, y)
-    count:SetWidth(85)
+    count:SetPoint("RIGHT", header, "TOPRIGHT", -COUNT_RIGHT, y)
+    count:SetWidth(COUNT_W)
     count:SetJustifyH("RIGHT")
     count:SetWordWrap(false)
     count:SetTextColor(0.87, 0.77, 0.59)
+end
+
+-- A count longer than its usual width grows leftward and the title's right
+-- edge follows; a count that fits leaves both alone, so the centred title does
+-- not shift whenever the numbers change.
+function ns.FitForeverBagCount(title, count)
+    local header = title:GetParent()
+    local w = math.max(COUNT_W, math.min(count:GetUnboundedStringWidth() + 1, header:GetWidth() - 110))
+    count:SetWidth(w)
+    title:SetPoint("RIGHT", header, "TOPRIGHT", -(COUNT_RIGHT + w + COUNT_GAP), header._foreverTitleY)
 end
 
 function ns.ForeverBagSidebarInset(owner)

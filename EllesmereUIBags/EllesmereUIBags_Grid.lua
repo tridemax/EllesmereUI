@@ -160,7 +160,7 @@ end
 
 -- Mark mode repaints the one slot it toggled
 function ns.GridPaintJunk(btn, info)
-    PaintJunkState(btn, info, EUI_CategoryManager:IsJunk(info.itemID, info.quality or 1))
+    PaintJunkState(btn, info, EUI_CategoryManager:IsJunk(info.itemID, info.quality or 1, btn:GetParent():GetID(), btn:GetID()))
 end
 
 -------------------------------------------------------------------------------
@@ -230,7 +230,7 @@ local function RenderButton(btn, data, _, col, row, startX, currentY, _, interac
         btn._isMerged = data._mergedCount and true or nil
 
         local quality = data.info.quality or 1
-        PaintJunkState(btn, data.info, junkOn and EUI_CategoryManager:IsJunk(data.info.itemID, quality))
+        PaintJunkState(btn, data.info, junkOn and EUI_CategoryManager:IsJunkData(data, quality))
 
         -- Search misses, and a pinned item in a OneBag / MultiBag bag section
         -- (the interactive slot sections) while Dim Items in OneBag/MultiBag
@@ -863,7 +863,7 @@ function ns.RenderGridView(tempItems, displayItems, emptySlots, child, columns, 
             local recentItems = {}
             if EUI_Bags._recentItems then
                 for _, d in ipairs(tempItems) do
-                    if not d._pinnedOnly and d.info and d.info.itemID and EUI_Bags._recentItems[d.info.itemID] then
+                    if not d._pinnedOnly and not d._isJunk and d.info and d.info.itemID and EUI_Bags._recentItems[d.info.itemID] then
                         recentItems[#recentItems + 1] = d
                     end
                 end
@@ -1299,7 +1299,7 @@ function ns.RenderGridView(tempItems, displayItems, emptySlots, child, columns, 
                    and (BP().bagShowRecentItems ~= false) then
                     local recentItems = {}
                     for _, data in ipairs(displayItems) do
-                        if not data._pinnedOnly and data.info and data.info.itemID and EUI_Bags._recentItems[data.info.itemID] then
+                        if not data._pinnedOnly and not data._isJunk and data.info and data.info.itemID and EUI_Bags._recentItems[data.info.itemID] then
                             recentItems[#recentItems + 1] = data
                         end
                     end
