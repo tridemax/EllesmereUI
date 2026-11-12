@@ -273,6 +273,30 @@ function ns.SelectSlotUnderCursor()
     return nil
 end
 
+-- Select modes' item tooltip. The catcher lies over the item buttons, so their
+-- own OnEnter never runs and the catcher shows the tooltip itself. The catcher
+-- owns it: GameTooltip keeps calling its owner's UpdateTooltip, and an item
+-- button's would re-run the bag's own hover (its anchor, the merchant cursor)
+-- with no OnLeave to undo it. Above the slot, away from the nearer screen edge.
+local function ShowSelectItemTooltip(owner, btn)
+    GameTooltip:SetOwner(owner, "ANCHOR_NONE")
+    GameTooltip:ClearAllPoints()
+    local x = btn:GetCenter()
+    if x and x * btn:GetEffectiveScale() > UIParent:GetWidth() * UIParent:GetEffectiveScale() / 2 then
+        GameTooltip:SetPoint("BOTTOMRIGHT", btn, "TOPLEFT")
+    else
+        GameTooltip:SetPoint("BOTTOMLEFT", btn, "TOPRIGHT")
+    end
+    GameTooltip:SetBagItem(btn:GetParent():GetID(), btn:GetID())
+    GameTooltip:Show()
+end
+
+-- Ends that tooltip, and a click's refusal reason shown on the slot it leaves
+local function HideSelectItemTooltip(owner, btn)
+    if GameTooltip:IsOwned(owner) then GameTooltip:Hide() end
+    if btn and EUI._WidgetTooltipOwner() == btn then EUI.HideWidgetTooltip() end
+end
+
 -- Mark mode: a mark is per item, so every shown slot holding it repaints
 -- (the item ID first: only those slots read the full item info)
 function ns.RepaintJunkItem(itemID)
@@ -370,6 +394,7 @@ EnterAssignSelectMode = function(catKey, junk)
         local savedR, savedG, savedB, savedA, savedBrdSize
 
         local function ClearHover()
+            HideSelectItemTooltip(cf, hoveredBtn)
             if hoveredBtn then
                 if savedR then SetInsetBorderColor(hoveredBtn, savedR, savedG, savedB, savedA) end
                 if savedBrdSize then SetInsetBorderThickness(hoveredBtn, savedBrdSize) end
@@ -408,6 +433,7 @@ EnterAssignSelectMode = function(catKey, junk)
                 hoverOv:SetAllPoints(btn)
                 hoverOv:Show()
                 hoveredBtn = btn
+                ShowSelectItemTooltip(self, btn)
             end
         end)
 
@@ -434,7 +460,11 @@ EnterAssignSelectMode = function(catKey, junk)
                             if junkMode == "sell" then
                                 local ok, reason = EUI_CategoryManager:ToggleSellOnce(bagID, slotID)
                                 if not ok then
-                                    if reason then EUI.ShowWidgetTooltip(btn, reason) end
+                                    -- The reason replaces the item tooltip, which it would overlap
+                                    if reason then
+                                        if GameTooltip:IsOwned(cf) then GameTooltip:Hide() end
+                                        EUI.ShowWidgetTooltip(btn, reason)
+                                    end
                                     return
                                 end
                             else
@@ -842,6 +872,7 @@ EnterPinSelectMode = function()
         local pinSavedBrdSize
 
         local function ClearPinHover()
+            HideSelectItemTooltip(cf, pinHoveredBtn)
             if pinHoveredBtn then
                 if pinSavedR then
                     SetInsetBorderColor(pinHoveredBtn, pinSavedR, pinSavedG, pinSavedB, pinSavedA)
@@ -882,6 +913,7 @@ EnterPinSelectMode = function()
                 pinHoverOv:SetAllPoints(btn)
                 pinHoverOv:Show()
                 pinHoveredBtn = btn
+                ShowSelectItemTooltip(self, btn)
             end
         end)
 
