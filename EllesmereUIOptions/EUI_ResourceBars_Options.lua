@@ -594,6 +594,9 @@ initFrame:SetScript("OnEvent", function(self)
             elseif fmt == "curpp" then txt = curStr
             elseif fmt == "curmaxpp" then txt = curStr .. " / " .. ns.AbbreviateNumbers(mx)
             elseif fmt == "perpp" then txt = percentText
+            elseif fmt == "curregen" or fmt == "curmaxregen" then
+                if fmt == "curmaxregen" then curStr = curStr .. " / " .. ns.AbbreviateNumbers(mx) end
+                txt = curStr .. " | " .. ns.PowerRegenText(ns.PowerRegen(ptype))
             else txt = curStr end
         end
         SetPVFont(text, FONT_PATH, c.textSize or 11)

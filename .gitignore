@@ -8,8 +8,10 @@ EllesmereUIUnitFrames/Libs/
 .kiro/
 .DS_Store
 
-# Claude Code workspace files
-.claude/
+# Claude Code workspace files, except the shared commands and skills
+.claude/*
+!.claude/commands/
+!.claude/skills/
 CLAUDE.md
 CLAUDE_PATTERNS.md
 

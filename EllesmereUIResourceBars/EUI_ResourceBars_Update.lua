@@ -77,6 +77,21 @@ ns.AbbreviateNumbers = (EllesmereUI.IS_FOREVER and EllesmereUI.ForeverAbbreviate
 -- Health text: the global Number Format for valueType (power text keeps the
 -- default above). On ns for the options preview.
 ns.AbbreviateValue = EllesmereUI.AbbreviateValue
+
+-- Regen per second for the "| Regen" power texts; on ns for the options preview.
+-- May be secret: only format it. Forever mana in the 5s rule window reads the casting rate.
+function ns.PowerRegen(ptype)
+    -- The options preview can pass a string type ("EBON_MIGHT").
+    if type(ptype) ~= "number" or not GetPowerRegenForPowerType then return 0 end
+    local rate, casting = GetPowerRegenForPowerType(ptype)
+    local mrs = EllesmereUI.ManaRegenSpark
+    if ptype == PT.MANA and mrs and mrs.InWindow() then rate = casting end
+    if issecretvalue and issecretvalue(rate) then return rate end
+    return type(rate) == "number" and rate or 0
+end
+function ns.PowerRegenText(rate)
+    return format("%.0f/s", rate)
+end
 EllesmereUI.RegisterNumberFormatCallback(function() I.UpdateHealthBar() end)
 local function UpdateHealthBar()
     if not healthBar or not healthBar:IsShown() then return end
@@ -481,15 +496,25 @@ local function UpdatePrimaryBar()
     primaryBar:SetValue(cur)
 
     if pp.textFormat ~= "none" and not _G._ERB_TextHiddenByForm(pp) then
+        local fmt = pp.textFormat
+        -- A secret rate cannot be compared: rebuild and drop the stamps.
+        local regen, txClean = nil, vmClean
+        if fmt == "curregen" or fmt == "curmaxregen" then
+            regen = ns.PowerRegen(cachedPrimary)
+            if issecretvalue and issecretvalue(regen) then
+                txClean = false
+                primaryBar._txtCur = nil
+            end
+        end
         -- Stamped only when the text is actually written, so a form-hidden
         -- stretch can never leave a stale string behind for a repeated value.
-        if not (vmClean and primaryBar._txtCur == cur and primaryBar._txtMx == mx
+        if not (txClean and primaryBar._txtCur == cur and primaryBar._txtMx == mx
+                and primaryBar._txtRegen == regen
                 and primaryBar._txtGen == ns.CfgGen and primaryBar._txtPow == cachedPrimary) then
-            if vmClean then
-                primaryBar._txtCur, primaryBar._txtMx = cur, mx
+            if txClean then
+                primaryBar._txtCur, primaryBar._txtMx, primaryBar._txtRegen = cur, mx, regen
                 primaryBar._txtGen, primaryBar._txtPow = ns.CfgGen, cachedPrimary
             end
-            local fmt = pp.textFormat
             local percentSuffix = (pp.showPercent == false) and "" or "%"
             local percentText = format("%d", pctRaw) .. percentSuffix
             local txt
@@ -504,6 +529,11 @@ local function UpdatePrimaryBar()
                 txt = ns.AbbreviateNumbers(cur) .. " / " .. ns.AbbreviateNumbers(mx)
             elseif fmt == "perpp" then
                 txt = percentText
+            elseif fmt == "curregen" then
+                txt = ns.AbbreviateNumbers(cur) .. " | " .. ns.PowerRegenText(regen)
+            elseif fmt == "curmaxregen" then
+                txt = ns.AbbreviateNumbers(cur) .. " / " .. ns.AbbreviateNumbers(mx)
+                    .. " | " .. ns.PowerRegenText(regen)
             else
                 txt = ns.AbbreviateNumbers(cur)
             end
@@ -2948,6 +2978,11 @@ local function UpdateVisibility()
             else
                 EllesmereUI.ManaRegenSpark.Detach("erb")
             end
+            -- Regen text repaints on 5s window edges. No mana check: a druid's
+            -- form cast must still open the window.
+            local watch = (vis == true or vis == "mouseover")
+                and (pp.textFormat == "curregen" or pp.textFormat == "curmaxregen")
+            EllesmereUI.ManaRegenSpark.Watch("erb", watch and UpdatePrimaryBar or nil)
         end
         -- WoW Forever Spell Cost Prediction: attached on the same verdict while
         -- the bar shows mana, so a druid in Bear or Cat Form (or a class with

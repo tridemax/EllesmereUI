@@ -134,7 +134,7 @@ local DEFAULTS = {
             fillR       = CUSTOM_FILL_DEFAULT[1], fillG = CUSTOM_FILL_DEFAULT[2], fillB = CUSTOM_FILL_DEFAULT[3], fillA = 1,
             fillOpacity = 100,  -- 0-100; below 100 the world shows through the fill
             bgR         = 0x11/255, bgG = 0x11/255, bgB = 0x11/255, bgA = 0.75,
-            textFormat  = "perpp",  -- "none","smart","curpp","curmaxpp","perpp","both"
+            textFormat  = "perpp",  -- "none","smart","curpp","curmaxpp","perpp","both","curregen","curmaxregen"
             showPercent = true,
             textSize    = 10,
             textXOffset = 0,

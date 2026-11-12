@@ -24,13 +24,14 @@ if EUI_CLIENT_BLOCKED then return end -- pre-12.1 client failsafe (EllesmereUI_C
 -- rides an overlay StatusBar, shown only while the sweep draws on it, whose
 -- fill the engine animates (SetTimerDuration); one reused animation group
 -- times the sweep, so no Lua runs per frame and no sweep creates a timer.
+-- Watchers (MRS.Watch) are called as the 5s window opens or closes.
 -- Cost: the cast event is registered only while an attached host bar is
--- visible (OnShow/OnHide of our own bars), UNIT_POWER_UPDATE only while such
--- a bar is in Regen Ticks mode. A bar showing Energy or Rage (a
--- druid in a form) keeps it, so a cast there still starts the sweep and the
--- spark joins it on the return to mana. Off, only the unregistered event
--- frame, its animation group and one duration object exist; warriors and
--- rogues, who have no mana, get nothing at all.
+-- visible (OnShow/OnHide of our own bars) or a watcher is set,
+-- UNIT_POWER_UPDATE only while such a bar is in Regen Ticks mode. A bar
+-- showing Energy or Rage (a druid in a form) keeps it, so a cast there still
+-- starts the sweep and the spark joins it on the return to mana. Off, only
+-- the unregistered event frame, its animation group and one duration object
+-- exist; warriors and rogues, who have no mana, get nothing at all.
 -------------------------------------------------------------------------------
 
 local EllesmereUI = _G.EllesmereUI
@@ -49,6 +50,7 @@ local ELAPSED = Enum.StatusBarTimerDirection.ElapsedTime
 local hosts = {}   -- key -> host record while attached
 local built = {}   -- bar -> host record (kept across detach)
 local mana = {}    -- key -> true while that host's bar shows mana
+local watchers = {}   -- key -> fn called as the 5s window opens or closes
 local listening = false   -- the cast event is registered
 local ticking = false     -- UNIT_POWER_UPDATE is registered (a Regen Ticks host)
 local sweepEnd            -- end time of the running sweep; nil while idle
@@ -118,10 +120,16 @@ local function Arm(h)
     end
 end
 
+local function SetWindow(v)
+    if inWindow == v then return end
+    inWindow = v
+    for _, fn in pairs(watchers) do fn() end
+end
+
 local function Idle()
     timer:Stop()
     sweepEnd = nil
-    inWindow = false
+    SetWindow(false)
     regenSeen = false
     for _, h in pairs(hosts) do h.overlay:Hide() end
 end
@@ -145,7 +153,7 @@ end
 -- else ends the cycle (regen has resumed, or mana is full).
 timer:SetScript("OnFinished", function()
     if ticking and (inWindow or regenSeen) then
-        inWindow = false
+        SetWindow(false)
         regenSeen = false
         Sweep(TICK, sweepEnd)
     else
@@ -156,7 +164,7 @@ end)
 ev:SetScript("OnEvent", function(_, event, _, arg2, arg3)
     if event == "UNIT_SPELLCAST_SUCCEEDED" then
         if CostsMana(arg3) then
-            inWindow = true
+            SetWindow(true)
             regenSeen = false
             Sweep(WINDOW)
         end
@@ -167,10 +175,11 @@ ev:SetScript("OnEvent", function(_, event, _, arg2, arg3)
 end)
 
 -- The cast event is heard while at least one attached host bar is visible,
--- UNIT_POWER_UPDATE while one of those is in Regen Ticks mode. When the last
--- visible host goes, both are dropped and the cycle ends.
+-- UNIT_POWER_UPDATE while one of those is in Regen Ticks mode. A watcher
+-- keeps the cast event too. When the last of them goes, both are dropped and
+-- the cycle ends.
 local function Listen()
-    local on, tk = false, false
+    local on, tk = next(watchers) ~= nil, false
     for _, h in pairs(hosts) do
         if h.bar:IsVisible() then
             on = true
@@ -260,6 +269,18 @@ function MRS.Detach(key)
     hosts[key] = nil
     h.overlay:Hide()
     Listen()
+end
+
+-- fn() runs as the 5s window opens or closes; a nil fn removes the watcher.
+-- InWindow reads false while nothing listens (no watcher, no visible host).
+function MRS.Watch(key, fn)
+    if watchers[key] == fn then return end
+    watchers[key] = fn
+    Listen()
+end
+
+function MRS.InWindow()
+    return inWindow
 end
 
 -- The host reports whether its bar shows mana. Kept while detached, so an
