@@ -117,6 +117,31 @@ function ns.SyncExtraBuffBarsWithViewer()
     QueueReanchor()
 end
 
+-- After Blizzard's CDM layouts change: its settings panel closed, or Talent
+-- Set Bindings (Forever Essentials) switched the layout.
+-- In-place edits to the ACTIVE Blizzard layout (spell added to the layout
+-- you are already on) do not change its layout id, so the spec+layout
+-- auto-reseed gate would never re-materialize them. Wipe the session table
+-- here (the reanchor queued below re-runs the add-only reseed). NOT on
+-- CooldownViewerSettings.OnDataChanged: Blizzard also fires that from
+-- RefreshFromExternalUpdate on SPELLS_CHANGED / PLAYER_EQUIPMENT_CHANGED /
+-- PvP talent updates, which would re-run a full reseed pass on every form
+-- swap or gear change.
+function ns.ResyncWithBlizzardLayout()
+    if ns._reseededSpecsSession then wipe(ns._reseededSpecsSession) end
+    C_Timer.After(0.1, QueueReanchor)
+    -- Delay sync slightly longer so Blizzard finishes rebuilding pools
+    C_Timer.After(0.3, function()
+        ns.SyncExtraBuffBarsWithViewer()
+    end)
+    -- Reconcile keep/drop after Blizzard's layout writes settle and
+    -- our own sync/reanchor above have run, so the pass sees the
+    -- post-change viewer state rather than a mid-change transient.
+    C_Timer.After(0.4, function()
+        if ns.RequestCDMDropPass then ns.RequestCDMDropPass("settings") end
+    end)
+end
+
 -------------------------------------------------------------------------------
 --  SetupViewerHooks (mixin hooks)
 --
@@ -416,27 +441,7 @@ function ns.SetupViewerHooks()
         EventRegistry:RegisterCallback("CooldownViewerSettings.OnShow",
             QueueReanchor, cdmSettingsOwner)
         EventRegistry:RegisterCallback("CooldownViewerSettings.OnHide", function()
-            -- In-place edits to the ACTIVE Blizzard layout (spell added to the
-            -- layout you are already on) do not change its layout id, so the
-            -- spec+layout auto-reseed gate would never re-materialize them.
-            -- Wipe the session table here, on panel close (edits happen with the
-            -- panel open; the reanchor queued below re-runs the add-only
-            -- reseed). NOT on CooldownViewerSettings.OnDataChanged: Blizzard
-            -- also fires that from RefreshFromExternalUpdate on SPELLS_CHANGED
-            -- / PLAYER_EQUIPMENT_CHANGED / PvP talent updates, which would
-            -- re-run a full reseed pass on every form swap or gear change.
-            if ns._reseededSpecsSession then wipe(ns._reseededSpecsSession) end
-            C_Timer.After(0.1, QueueReanchor)
-            -- Delay sync slightly longer so Blizzard finishes rebuilding pools
-            C_Timer.After(0.3, function()
-                ns.SyncExtraBuffBarsWithViewer()
-            end)
-            -- Reconcile keep/drop after Blizzard's layout writes settle and
-            -- our own sync/reanchor above have run, so the pass sees the
-            -- post-close viewer state rather than a mid-close transient.
-            C_Timer.After(0.4, function()
-                if ns.RequestCDMDropPass then ns.RequestCDMDropPass("settings") end
-            end)
+            ns.ResyncWithBlizzardLayout()
         end, cdmSettingsOwner)
     end
 

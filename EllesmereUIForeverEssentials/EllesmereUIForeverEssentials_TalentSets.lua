@@ -3,18 +3,19 @@ if not (EllesmereUI and EllesmereUI.IS_FOREVER) then return end
 -------------------------------------------------------------------------------
 --  EllesmereUIForeverEssentials_TalentSets.lua  (WoW Forever only)
 --  Talent Set Bindings: on a switch between primary and secondary talents,
---  equips the new set's gear set and names its Cooldown Manager layout.
+--  equips the new set's gear set and switches to its Cooldown Manager layout.
 -------------------------------------------------------------------------------
 local _, module = ...
 
 -- Settings live in EllesmereUIDB.talentSets; unset keys read these.
 --   enabled             Talent Set Bindings
---   announce            report each gear swap in chat
+--   announce            report each gear and layout swap in chat
 --   chars[player GUID]  [talent set] = { gear = set name, layout = layout ID }
 local F = module.Feature("talentSets", { enabled = false, announce = true })
 local IsEnabled = F.Enabled
 
 local ev = CreateFrame("Frame")
+local switching = false  -- a talent set switch has started and not ended yet
 
 local function Say(msg)
     EllesmereUI.Print(EllesmereUI.COLOR_CODES.BRAND .. "EllesmereUI:|r " .. msg)
@@ -82,10 +83,7 @@ local function EquipGear(name)
     end
     local _, _, _, isEquipped = C_EquipmentSet.GetEquipmentSetInfo(id)
     if isEquipped then return end
-    -- The game's own Equip refuses these too. The cast name can read secret: test its type only.
-    local busy = C_EquipmentSet.EquipmentSetContainsLockedItems(id) or type(UnitCastingInfo("player")) ~= "nil"
-    local ok, result = false, false
-    if not busy then ok, result = pcall(C_EquipmentSet.UseEquipmentSet, id) end
+    local ok, result = pcall(C_EquipmentSet.UseEquipmentSet, id)
     if ok and result ~= false then
         Announce(EllesmereUI.Lf("Equipping gear set %s.", Hi(shown)))
     else
@@ -94,9 +92,9 @@ local function EquipGear(name)
 end
 
 -------------------------------------------------------------------------------
---  Cooldown Manager layouts (the game's own, read only)
---  Never switch one from here: SetActiveLayoutByID saves and refreshes the
---  game's Cooldown Manager from addon code, which taints it until a reload.
+--  Cooldown Manager layouts (the game's own)
+--  A switch from addon code taints the game's Cooldown Manager until a
+--  reload, so every switch offers one.
 -------------------------------------------------------------------------------
 -- nil until the game has loaded its layouts.
 local function LayoutManager()
@@ -119,15 +117,35 @@ local function ListLayouts()
     return list
 end
 
-local function RemindLayout(id)
-    local lm = LayoutManager()
+local function SwitchLayout(id)
+    local s, lm = CooldownViewerSettings, LayoutManager()
     if not lm or lm:GetActiveLayoutID() == id then return end
     local layout = lm:GetLayout(id)
     if not (layout and lm:CanActivateLayout(layout)) then
         Say(EllesmereUI.L("The Cooldown Manager layout picked for this talent set no longer exists."))
         return
     end
-    Say(EllesmereUI.Lf("Switch the Cooldown Manager layout to %s for these talents.", Hi(CooldownManagerLayout_GetName(layout))))
+    local name = Hi(CooldownManagerLayout_GetName(layout))
+    -- The switch saves the game's layouts: never over unsaved edits in its settings.
+    if lm:HasPendingChanges() then
+        Say(EllesmereUI.Lf("Cooldown Manager layout %s not switched to: its settings have unsaved changes.", name))
+        return
+    end
+    if not pcall(s.SetActiveLayoutByID, s, id) then
+        Say(EllesmereUI.Lf("Could not switch the Cooldown Manager layout to %s.", name))
+        return
+    end
+    Announce(EllesmereUI.Lf("Switched the Cooldown Manager layout to %s.", name))
+    local cdm = EllesmereUI._ModuleNS and EllesmereUI._ModuleNS.EllesmereUICooldownManager
+    if cdm and cdm.ResyncWithBlizzardLayout then cdm.ResyncWithBlizzardLayout() end
+    -- A confirm, not RequestReload: an event cannot reload, its click can.
+    EllesmereUI:ShowConfirmPopup({
+        title       = EllesmereUI.L("Reload Required"),
+        message     = EllesmereUI.L("The Cooldown Manager layout was switched. Reload so its cooldowns and buffs update."),
+        confirmText = EllesmereUI.L("Reload Now"),
+        cancelText  = EllesmereUI.L("Later"),
+        reload      = true,
+    })
 end
 
 -------------------------------------------------------------------------------
@@ -142,12 +160,16 @@ local function ApplyBindings()
     local b = Binding(ActiveSet())
     if not b then return end
     if b.gear then EquipGear(b.gear) end
-    if b.layout then RemindLayout(b.layout) end
+    if b.layout then SwitchLayout(b.layout) end
 end
 
--- Only a switch from one talent set to the other; next frame, after the event's other handlers.
-ev:SetScript("OnEvent", function(_, _, curr, prev)
-    if type(prev) == "number" and prev > 0 and curr ~= prev then
+-- A switch starts with ACTIVE_TALENT_GROUP_CHANGED and ends with PLAYER_SPECIALIZATION_CHANGED.
+-- Apply a frame after the end, once the game has finished the switch.
+ev:SetScript("OnEvent", function(_, event)
+    if event == "ACTIVE_TALENT_GROUP_CHANGED" then
+        switching = true
+    elseif switching then
+        switching = false
         C_Timer.After(0, ApplyBindings)
     end
 end)
@@ -155,8 +177,10 @@ end)
 local function Apply()
     if IsEnabled() then
         ev:RegisterEvent("ACTIVE_TALENT_GROUP_CHANGED")
+        ev:RegisterUnitEvent("PLAYER_SPECIALIZATION_CHANGED", "player")
     else
         ev:UnregisterAllEvents()
+        switching = false
     end
 end
 

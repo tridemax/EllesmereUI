@@ -409,7 +409,7 @@ _G._EUI_BuildForeverGeneralPage = function(pageName, parent, yOffset)
 
         _, h = W:DualRow(parent, y,
             { type = "toggle", text = "Talent Set Bindings",
-              tooltip = "When you switch between primary and secondary talents, equips the gear set picked below for the new set and names its Cooldown Manager layout in chat. Each character picks its own.",
+              tooltip = "When you switch between primary and secondary talents, equips the gear set and switches to the Cooldown Manager layout picked below for the new set. Each character picks its own.",
               getValue = function() return TS.Get("enabled") end,
               setValue = function(v)
                   TS.Cfg().enabled = v
@@ -417,7 +417,7 @@ _G._EUI_BuildForeverGeneralPage = function(pageName, parent, yOffset)
                   EllesmereUI:RefreshPage()  -- the pickers' disabled state
               end },
             { type = "toggle", text = "Announce in Chat",
-              tooltip = "Reports each gear set equipped in chat. Problems and layout reminders always show.",
+              tooltip = "Reports each gear set equipped and layout switched in chat. Problems are always reported.",
               disabled = off, disabledTooltip = "Talent Set Bindings",
               getValue = function() return TS.Get("announce") end,
               setValue = function(v) TS.Cfg().announce = v end }
@@ -429,8 +429,8 @@ _G._EUI_BuildForeverGeneralPage = function(pageName, parent, yOffset)
             GearDD(2, "Secondary Gear Set", "The Equipment Manager set equipped when you switch to your secondary talents.")
         );  y = y - h
         layRow, h = W:DualRow(parent, y,
-            LayoutDD(1, "Primary CDM Layout", "When you switch to your primary talents and another layout is active, chat reminds you to switch the Cooldown Manager to this one."),
-            LayoutDD(2, "Secondary CDM Layout", "When you switch to your secondary talents and another layout is active, chat reminds you to switch the Cooldown Manager to this one.")
+            LayoutDD(1, "Primary CDM Layout", "The Cooldown Manager layout switched to when you switch to your primary talents. Each switch asks for a reload so the bars update."),
+            LayoutDD(2, "Secondary CDM Layout", "The Cooldown Manager layout switched to when you switch to your secondary talents. Each switch asks for a reload so the bars update.")
         );  y = y - h
         if not EllesmereUI._prebuilding then
             gearAttach(gearRow._leftRegion._control)
