@@ -316,6 +316,131 @@ _G._EUI_BuildForeverGeneralPage = function(pageName, parent, yOffset)
     end
 
     ---------------------------------------------------------------------------
+    --  TALENT SETS (EllesmereUIForeverEssentials_TalentSets.lua)
+    ---------------------------------------------------------------------------
+    local TS = EllesmereUI._TalentSets
+    if TS then
+        local NONE = "__none__"
+        local function off() return not TS.Get("enabled") end
+
+        -- One list for both talent sets' dropdowns; refilled on page refresh only when
+        -- the game's list changed (a rebuild breaks an open menu). Names: never localized.
+        local function Picker(entriesFn)
+            local values, order, valueOf, btns, sig = { _noLoc = true }, {}, {}, {}, nil
+            local function Fill()
+                local entries, parts = entriesFn(), {}
+                for i = 1, #entries do parts[i] = entries[i].key .. "=" .. entries[i].text end
+                local s = table.concat(parts, "\n")
+                if s == sig then return false end
+                sig = s
+                for k in pairs(values) do
+                    if k ~= "_noLoc" then values[k] = nil end
+                end
+                for i = #order, 1, -1 do order[i] = nil end
+                wipe(valueOf)
+                values[NONE] = EllesmereUI.COLOR_CODES.DIM .. EllesmereUI.L("None") .. "|r"
+                order[1] = NONE
+                for i = 1, #entries do
+                    local e = entries[i]
+                    values[e.key], valueOf[e.key] = e.text, e.value
+                    order[#order + 1] = e.key
+                end
+                return true
+            end
+            Fill()
+            local function Update()
+                if not Fill() then return end
+                for i = 1, #btns do
+                    if btns[i]._invalidateMenu then btns[i]._invalidateMenu() end
+                end
+            end
+            local function Attach(btn)
+                if btn then btns[#btns + 1] = btn end
+            end
+            return values, order, valueOf, Update, Attach
+        end
+
+        local function GearEntries()
+            local list = {}
+            for _, s in ipairs(TS.ListGearSets()) do
+                list[#list + 1] = { key = s.name, text = s.name, value = s.name }
+            end
+            return list
+        end
+        local function LayoutEntries()
+            local list = {}
+            for _, l in ipairs(TS.ListLayouts()) do
+                list[#list + 1] = { key = tostring(l.id), text = l.name, value = l.id }
+            end
+            return list
+        end
+        local gearV, gearO, gearOf, gearUpdate, gearAttach = Picker(GearEntries)
+        local layV, layO, layOf, layUpdate, layAttach = Picker(LayoutEntries)
+        -- Registered before the rows: refreshers run in order, so the lists refill first.
+        if not EllesmereUI._prebuilding then
+            EllesmereUI.RegisterWidgetRefresh(gearUpdate)
+            EllesmereUI.RegisterWidgetRefresh(layUpdate)
+        end
+
+        -- A renamed or deleted set or layout reads as None.
+        local function GearDD(set, text, tooltip)
+            return { type = "dropdown", text = text, tooltip = tooltip, values = gearV, order = gearO,
+                disabled = off, disabledTooltip = "Talent Set Bindings",
+                getValue = function()
+                    local b = TS.Binding(set)
+                    local name = b and b.gear
+                    return (name and gearV[name]) and name or NONE
+                end,
+                setValue = function(v) TS.SetBinding(set, "gear", gearOf[v]) end }
+        end
+        local function LayoutDD(set, text, tooltip)
+            return { type = "dropdown", text = text, tooltip = tooltip, values = layV, order = layO,
+                disabled = off, disabledTooltip = "Talent Set Bindings",
+                getValue = function()
+                    local b = TS.Binding(set)
+                    local key = b and b.layout ~= nil and tostring(b.layout)
+                    return (key and layV[key]) and key or NONE
+                end,
+                setValue = function(v) TS.SetBinding(set, "layout", layOf[v]) end }
+        end
+
+        _, h = W:Spacer(parent, y, 20);  y = y - h
+        _, h = W:SectionHeader(parent, "TALENT SETS", y);  y = y - h
+
+        _, h = W:DualRow(parent, y,
+            { type = "toggle", text = "Talent Set Bindings",
+              tooltip = "When you switch between primary and secondary talents, equips the gear set picked below for the new set and names its Cooldown Manager layout in chat. Each character picks its own.",
+              getValue = function() return TS.Get("enabled") end,
+              setValue = function(v)
+                  TS.Cfg().enabled = v
+                  TS.Apply()
+                  EllesmereUI:RefreshPage()  -- the pickers' disabled state
+              end },
+            { type = "toggle", text = "Announce in Chat",
+              tooltip = "Reports each gear set equipped in chat. Problems and layout reminders always show.",
+              disabled = off, disabledTooltip = "Talent Set Bindings",
+              getValue = function() return TS.Get("announce") end,
+              setValue = function(v) TS.Cfg().announce = v end }
+        );  y = y - h
+
+        local gearRow, layRow
+        gearRow, h = W:DualRow(parent, y,
+            GearDD(1, "Primary Gear Set", "The Equipment Manager set equipped when you switch to your primary talents."),
+            GearDD(2, "Secondary Gear Set", "The Equipment Manager set equipped when you switch to your secondary talents.")
+        );  y = y - h
+        layRow, h = W:DualRow(parent, y,
+            LayoutDD(1, "Primary CDM Layout", "When you switch to your primary talents and another layout is active, chat reminds you to switch the Cooldown Manager to this one."),
+            LayoutDD(2, "Secondary CDM Layout", "When you switch to your secondary talents and another layout is active, chat reminds you to switch the Cooldown Manager to this one.")
+        );  y = y - h
+        if not EllesmereUI._prebuilding then
+            gearAttach(gearRow._leftRegion._control)
+            gearAttach(gearRow._rightRegion._control)
+            layAttach(layRow._leftRegion._control)
+            layAttach(layRow._rightRegion._control)
+        end
+    end
+
+    ---------------------------------------------------------------------------
     --  NAME FORMAT (while a module with a Name Format is on)
     ---------------------------------------------------------------------------
     local sources = NameFormatSources()

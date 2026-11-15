@@ -89,6 +89,7 @@ local function ForeverCatalogue()
                 -- Regrowth (rank 2 primary: retail curates rank 1 unchecked)
                 [8938] = { class = "DRUID", alts = { 8936, 8939, 8940, 8941, 9750, 9856, 9857,
                     9858 } },
+                [408521] = { class = "SHAMAN", alts = { 1239242, 1239243 } },  -- Riptide
             },
             offensive = {
                 [1719] = { class = "WARRIOR" },  -- Recklessness
@@ -121,7 +122,8 @@ local function ForeverCatalogue()
                 [5384] = { class = "HUNTER" },  -- Feign Death
                 [130] = { class = "MAGE" },  -- Slow Fall
                 [1044] = { class = "PALADIN" },  -- Blessing of Freedom
-                [2645] = { class = "SHAMAN" },  -- Ghost Wolf
+                -- Ghost Wolf (the buff lands as 1238640)
+                [2645] = { class = "SHAMAN", alts = { 1238640 } },
                 [1706] = { class = "PRIEST" },  -- Levitate
             },
             utility = {

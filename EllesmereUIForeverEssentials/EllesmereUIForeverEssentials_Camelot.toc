@@ -43,6 +43,9 @@ EllesmereUIForeverEssentials_ThreatFeed.lua
 # Companion pets (auto summon)
 EllesmereUIForeverEssentials_PetSummon.lua
 
+# Talent sets (gear set and Cooldown Manager layout per talent set)
+EllesmereUIForeverEssentials_TalentSets.lua
+
 # Loot (loot feed)
 EllesmereUIForeverEssentials_LootFeed.lua
 
