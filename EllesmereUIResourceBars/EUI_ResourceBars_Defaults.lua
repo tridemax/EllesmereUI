@@ -518,6 +518,8 @@ local DEFAULTS = {
             borderTexture = "solid",
             unlockPos     = nil,
             enabledClasses = nil,  -- nil = disabled; { SHAMAN = true, ... } = enabled for listed classes
+            rangeWarning  = false, -- red, pulsing icon while you are outside a totem's range
+            rangeYards    = 30,    -- distance from the drop spot that counts as out of range
         },
         -- WoW Forever: Blizzard's call totem bar in the Totem Bar look
         -- (EUI_ResourceBars_CallTotemBar.lua). Off by default; the table exists

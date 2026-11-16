@@ -12,6 +12,7 @@ if not I or I.broken then return end
 I.broken = true
 
 local UnitClass, InCombatLockdown = UnitClass, InCombatLockdown
+local GetTotemInfo, UnitPosition, issecretvalue = GetTotemInfo, UnitPosition, issecretvalue
 
 local ERB, GetRBFont, _totemBorderOverlays = I.ERB, I.GetRBFont, I._totemBorderOverlays
 local SetTotemBarFrame = I.SetTotemBarFrame
@@ -66,6 +67,232 @@ local function GetCooldownNumberFS(cd)
         end
     end
     return nil
+end
+
+-------------------------------------------------------------------------------
+--  Out of Range Warning (WoW Forever, totemBar.rangeWarning, off by default)
+--  A totem is out of range once you are farther than totemBar.rangeYards from
+--  where it landed: at your feet on its drop, or where Totemic Call moved it.
+--  A totem already down when the warning turned on has no known spot until then.
+-------------------------------------------------------------------------------
+local RANGE_TICK = 0.25
+local TOTEMIC_CALL = 437009  -- relocates your active totems to your location
+local rangeFrame = CreateFrame("Frame")  -- inert until the warning is turned on
+local rangeOn, rangeDown, rangeTracked, rangeMoving, rangeShowHooked = false, false, false, false, false
+local rangeYards = 30
+local rangeTicker
+local rangeDrop = {}  -- slot -> { x, y, inst, start, far }
+local _rangeWarn = {}  -- button -> our warning frame
+
+local function PlayerPos()
+    if not UnitPosition then return nil end
+    local y, x, _, inst = UnitPosition("player")
+    if issecretvalue(y) or issecretvalue(x) or issecretvalue(inst) or not (x and y) then return nil end
+    return x, y, inst
+end
+
+local function SetRangeWarn(btn, out)
+    local w = _rangeWarn[btn]
+    if not w then
+        if not out then return end
+        w = CreateFrame("Frame", nil, btn)
+        w:SetAllPoints(btn.Icon or btn)
+        EllesmereUI.PP.CreateBorder(w, 1, 0.1, 0.1, 1, 2, "OVERLAY", 7)
+        local pulse = w:CreateAnimationGroup()
+        pulse:SetLooping("BOUNCE")
+        local fade = pulse:CreateAnimation("Alpha")
+        fade:SetFromAlpha(1)
+        fade:SetToAlpha(0.2)
+        fade:SetDuration(0.45)
+        w._pulse = pulse
+        w:Hide()
+        _rangeWarn[btn] = w
+    end
+    if w._out == out then return end
+    w._out = out
+    local tex = btn.Icon and btn.Icon.Texture
+    if out then
+        w:SetFrameLevel(btn:GetFrameLevel() + 5)
+        w:Show()
+        w._pulse:Play()
+        if tex then
+            -- The icon's own look comes back when the warning clears.
+            local desat, r, g, b = tex:IsDesaturated(), tex:GetVertexColor()
+            if issecretvalue(desat) or issecretvalue(r) or issecretvalue(g) or issecretvalue(b) then
+                desat, r, g, b = false, 1, 1, 1
+            end
+            w._desat, w._r, w._g, w._b = desat, r, g, b
+            tex:SetDesaturated(true)
+            tex:SetVertexColor(1, 0.3, 0.3)
+        end
+    else
+        w._pulse:Stop()
+        w:Hide()
+        if tex and w._r then
+            tex:SetDesaturated(w._desat)
+            tex:SetVertexColor(w._r, w._g, w._b)
+        end
+    end
+end
+
+local function RangeStopPoll()
+    if rangeTicker then rangeTicker:Cancel(); rangeTicker = nil end
+end
+
+local function RangeMeasure()
+    if not (rangeTracked and totemBarFrame and totemBarFrame:IsVisible()) then return end
+    local buttons = _totemLayoutCache.buttons
+    if not buttons then return end
+    local x, y, inst = PlayerPos()
+    local r2 = rangeYards * rangeYards
+    for i = 1, #buttons do
+        local btn = buttons[i]
+        local slot = btn.slot
+        local d = not issecretvalue(slot) and rangeDrop[slot]
+        if d and d.x then
+            local far = false
+            if x and inst == d.inst then
+                local dx, dy = x - d.x, y - d.y
+                far = dx * dx + dy * dy > r2
+            end
+            d.far = far
+            SetRangeWarn(btn, far)
+        end
+    end
+end
+
+local function RangeTick()
+    if rangeMoving and rangeTracked and totemBarFrame and totemBarFrame:IsVisible() then
+        RangeMeasure()
+    else
+        RangeStopPoll()
+    end
+end
+
+-- Events follow need: Totemic Call while a totem is down, movement while one
+-- has a known spot, and the poll only while you move with the bar visible.
+local function RangeWatch()
+    local buttons = _totemLayoutCache.buttons
+    local down, tracked = false, false
+    if rangeOn and buttons then
+        for i = 1, #buttons do
+            down = true
+            local slot = buttons[i].slot
+            local d = not issecretvalue(slot) and rangeDrop[slot]
+            if d and d.x then tracked = true; break end
+        end
+    end
+    if down ~= rangeDown then
+        rangeDown = down
+        if down then
+            rangeFrame:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
+        else
+            rangeFrame:UnregisterEvent("UNIT_SPELLCAST_SUCCEEDED")
+        end
+    end
+    if tracked ~= rangeTracked then
+        rangeTracked = tracked
+        if tracked then
+            rangeFrame:RegisterEvent("PLAYER_STARTED_MOVING")
+            rangeFrame:RegisterEvent("PLAYER_STOPPED_MOVING")
+            local moving = IsPlayerMoving and IsPlayerMoving()
+            rangeMoving = not issecretvalue(moving) and moving == true
+        else
+            rangeFrame:UnregisterEvent("PLAYER_STARTED_MOVING")
+            rangeFrame:UnregisterEvent("PLAYER_STOPPED_MOVING")
+            rangeMoving = false
+        end
+    end
+    if rangeMoving and rangeTracked and totemBarFrame and totemBarFrame:IsVisible() then
+        if not rangeTicker then rangeTicker = C_Timer.NewTicker(RANGE_TICK, RangeTick) end
+    else
+        RangeStopPoll()
+    end
+end
+
+-- Pooled buttons change slots between updates, so every shown one is set.
+local function ApplyRange()
+    local buttons = _totemLayoutCache.buttons
+    if not buttons then return end
+    for i = 1, #buttons do
+        local btn = buttons[i]
+        local slot = btn.slot
+        local d = rangeOn and not issecretvalue(slot) and rangeDrop[slot]
+        SetRangeWarn(btn, d and d.x and d.far or false)
+    end
+    RangeWatch()
+end
+
+local function SetSpot(slot, start)
+    local d = rangeDrop[slot]
+    if not d then d = {}; rangeDrop[slot] = d end
+    d.x, d.y, d.inst = PlayerPos()
+    d.start, d.far = start, false
+end
+
+-- A slot that emptied forgets its spot; the same totem (same start) keeps it.
+-- Unreadable totem data counts as a new drop.
+local function RangeOnTotem(slot)
+    if issecretvalue(slot) or type(slot) ~= "number" then return end
+    local have, _, start = GetTotemInfo(slot)
+    if issecretvalue(have) or issecretvalue(start) then have, start = true, nil end
+    local d = rangeDrop[slot]
+    if not have then
+        if d then d.x, d.start, d.far = nil, nil, false end
+    elseif not (d and d.x and start and d.start == start) then
+        SetSpot(slot, start)
+    end
+    ApplyRange()
+end
+
+local function RangeOnTotemicCall()
+    local buttons = _totemLayoutCache.buttons
+    if not buttons then return end
+    for i = 1, #buttons do
+        local slot = buttons[i].slot
+        if not issecretvalue(slot) and type(slot) == "number" then
+            local _, _, start = GetTotemInfo(slot)
+            SetSpot(slot, not issecretvalue(start) and start or nil)
+        end
+    end
+    ApplyRange()
+end
+
+rangeFrame:SetScript("OnEvent", function(_, event, arg1, _, spellID)
+    if event == "PLAYER_TOTEM_UPDATE" then
+        RangeOnTotem(arg1)
+    elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
+        if not issecretvalue(spellID) and spellID == TOTEMIC_CALL then RangeOnTotemicCall() end
+    elseif event == "PLAYER_STARTED_MOVING" then
+        rangeMoving = true
+        RangeMeasure()
+        RangeWatch()
+    elseif event == "PLAYER_STOPPED_MOVING" then
+        rangeMoving = false
+        RangeStopPoll()
+        RangeMeasure()
+    end
+end)
+
+local function RangeSetEnabled(on)
+    if on == rangeOn then return end
+    rangeOn = on
+    if on then
+        rangeFrame:RegisterEvent("PLAYER_TOTEM_UPDATE")
+        if totemBarFrame and not rangeShowHooked then
+            rangeShowHooked = true
+            totemBarFrame:HookScript("OnShow", function()
+                if rangeOn then RangeWatch(); RangeMeasure() end
+            end)
+        end
+        RangeWatch()
+    else
+        rangeFrame:UnregisterAllEvents()
+        RangeStopPoll()
+        rangeDown, rangeTracked, rangeMoving = false, false, false
+        wipe(rangeDrop)
+        for btn in pairs(_rangeWarn) do SetRangeWarn(btn, false) end
+    end
 end
 
 local function LayoutTotemBar()
@@ -249,6 +476,7 @@ local function LayoutTotemBar()
     for btn, overlay in pairs(_totemBorderOverlays) do
         if not _totemActiveSet[btn] then overlay:Hide() end
     end
+    if rangeOn then ApplyRange() end
 
     local maxButtons = 5
     local maxDim = iconSize * maxButtons + spacing * (maxButtons - 1)
@@ -273,6 +501,7 @@ local function BuildTotemBar()
     local active = ec and classFile and ec[classFile]
 
     if not active then
+        RangeSetEnabled(false)
         if totemBarFrame then
             EllesmereUI.SetElementVisibility(totemBarFrame, false)
         end
@@ -365,6 +594,8 @@ local function BuildTotemBar()
         end
     end
 
+    rangeYards = tonumber(tb.rangeYards) or 30
+    RangeSetEnabled(EllesmereUI.IS_FOREVER == true and tb.rangeWarning == true)
     LayoutTotemBar()
 end
 

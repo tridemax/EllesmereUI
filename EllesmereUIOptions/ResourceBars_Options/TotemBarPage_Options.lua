@@ -25,6 +25,7 @@ end
 -- first row, whose left slot turns the bar on and whose right slot is sizeCfg
 -- (Icon Size). mapIcon / mapTimer: the preview's click mapping keys.
 -- flyoutCog: the Flyout Settings cog on Orientation (the call totem bar).
+-- rangeWarning: the Out of Range Warning row (the active totem bar, WoW Forever).
 local function BuildTotemSection(parent, y, S)
     local env = ns._ERB_OptEnv
     local DB = env.DB
@@ -315,6 +316,44 @@ local function BuildTotemSection(parent, y, S)
         })
     end
 
+    -- Row 5 (active totems, WoW Forever): Out of Range Warning
+    if S.rangeWarning then
+        local rangeRow
+        rangeRow, h = W:DualRow(parent, y,
+            { type = "toggle", text = "Out of Range Warning",
+              tooltip = "Turns a totem red with a pulsing red border once you are farther than the Totem Range from where you dropped it, or from where Totemic Call moved it. Open world only: instances give no position.",
+              disabled = totemOff,
+              disabledTooltip = req, rawTooltip = raw,
+              getValue = function() local t = T(); return t and t.rangeWarning == true or false end,
+              setValue = function(v)
+                  local t = T(); if not t then return end
+                  t.rangeWarning = v and true or false; RefreshTotem()
+                  EllesmereUI:RefreshPage()
+              end },
+            EllesmereUI.BlankRowCfg()
+        );  y = y - h
+
+        -- Range Settings cog: the distance from the drop spot that warns
+        local function rangeOff()
+            local t = T()
+            return totemOff() or not (t and t.rangeWarning)
+        end
+        EllesmereUI.BuildInlineCog(rangeRow._leftRegion, {
+            title = "Range Settings",
+            disabled = rangeOff,
+            disabledTooltip = function() return totemOff() and req or "Out of Range Warning" end,
+            rawTooltip = function() return totemOff() and raw or false end,
+            rows = {
+                { type = "slider", label = "Totem Range (yards)", min = 5, max = 50, step = 1,
+                  get = function() local t = T(); return t and (t.rangeYards or 30) end,
+                  set = function(v)
+                      local t = T(); if not t then return end
+                      t.rangeYards = v; RefreshTotem()
+                  end },
+            },
+        })
+    end
+
     -- Click mappings for the preview's hit overlays (never from a hidden pre-build)
     if not EllesmereUI._prebuilding then
         _clickMappings[S.mapIcon] = { section = section, target = row1, slotSide = "right" }
@@ -349,6 +388,7 @@ function ns.ERB_BuildTotemBarPage(pageName, parent, yOffset)
         title = forever and "ACTIVE TOTEM BAR" or "LAYOUT",
         key = "totemBar", unlockKey = "ERB_TotemBar",
         mapIcon = "totemIcon", mapTimer = "totemTimer",
+        rangeWarning = forever == true,  -- totems land at your feet only there
         off = function()
             local p = DB()
             return p and not p.totemBar.enabledClasses
