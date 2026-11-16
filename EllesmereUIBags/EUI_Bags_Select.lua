@@ -231,13 +231,19 @@ local function ExitAssignSelectMode()
     end
     local sf = EUI_Bags._scrollFrame
     if sf then sf:SetFrameStrata(EUI_Bags:GetFrameStrata()) end
-    -- The coin goes back into the header's layer
+    -- The coins mark mode put on junk items go
+    if wasJunk then ns.PaintJunkModeMarks() end
+    -- The coin goes back into the header's layer and takes its own clicks again
     local coin = wasJunk and EUI_Bags._junkBtn
     if coin then
         coin:SetFrameStrata(EUI_Bags:GetFrameStrata())
         coin:SetFrameLevel(coin:GetParent():GetFrameLevel() + 1)
+        coin:SetMouseClickEnabled(true)
     end
-    -- Restore grouping even without mark edits; a hidden bag repaints on show.
+    -- Marks repainted only their own slots: sort them into place now (an open
+    -- bank greys and regroups its copies too). Sell mode split duplicate
+    -- stacks, so it merges them again even without mark edits; a hidden bag
+    -- repaints on show.
     if wasJunk and (EUI_Bags._junkDirty or wasJunk == "sell") then
         EUI_Bags._junkDirty = nil
         EUI_Bags._junkRefreshPending = true
@@ -250,12 +256,20 @@ end
 -- only over the scroll frame (rows scrolled out of view stay shown under the
 -- header, the footer or outside the window; the scroll frame only clips them).
 -- Cursor / each button's OWN effective scale: GetRect() is in button units.
-function ns.SelectSlotUnderCursor()
+-- withBank (mark mode): the open bank's slots and rows count too, under its
+-- own scroll frame; the bags win where the two windows overlap.
+function ns.SelectSlotUnderCursor(withBank)
     if ns.OfflineUp and ns.OfflineUp() then return nil end  -- an alt's items aren't real slots
     local sf = EUI_Bags._scrollFrame
-    if not (sf and sf:IsMouseOver()) then return nil end
+    local pool, rows = itemSlots, ns.ListRows
+    if not (sf and sf:IsMouseOver()) then
+        local bank = withBank and _G.EUI_BankFrame
+        local bsf = bank and bank:IsShown() and bank._scrollFrame
+        if not (bsf and bsf:IsMouseOver()) then return nil end
+        if ns.BankOfflineUp and ns.BankOfflineUp() then return nil end
+        pool, rows = bank._bankSlots, bank._bankRows
+    end
     local rawCx, rawCy = GetCursorPosition()
-    local pool = itemSlots
     for _ = 1, 2 do
         for _, btn in pairs(pool) do
             if btn:IsShown() and btn:GetParent():IsShown() then
@@ -267,7 +281,7 @@ function ns.SelectSlotUnderCursor()
                 end
             end
         end
-        pool = ns.ListRows
+        pool = rows
         if not pool then break end
     end
     return nil
@@ -297,24 +311,59 @@ local function HideSelectItemTooltip(owner, btn)
     if btn and EUI._WidgetTooltipOwner() == btn then EUI.HideWidgetTooltip() end
 end
 
--- Mark mode: a mark is per item, so every shown slot holding it repaints
--- (the item ID first: only those slots read the full item info)
-function ns.RepaintJunkItem(itemID)
-    local pool = itemSlots
-    for _ = 1, 2 do
-        for _, btn in pairs(pool) do
-            if btn:IsShown() and btn:GetParent():IsShown() then
-                local bag, slot = btn:GetParent():GetID(), btn:GetID()
-                if C_Container.GetContainerItemID(bag, slot) == itemID then
-                    local info = C_Container.GetContainerItemInfo(bag, slot)
-                    if info then
-                        if btn._lvIcon then ns.ListPaintJunk(btn, info) else ns.GridPaintJunk(btn, info) end
-                    end
+-- Mark mode going on or off: the coin on every shown junk item, in the bags
+-- and the open bank (on while the mode is; off again after it, except where
+-- Show Coin Icon keeps it on the bag window's grid). One pass per switch.
+-- The slot is passed too: a one-time sale marks that one stack.
+local function MarkJunkPool(pool, optCoin)
+    if not pool then return end
+    local marking = EUI_Bags._junkMode
+    local keep = marking or (optCoin and BP().bagShowJunkCoin == true)
+    for _, btn in pairs(pool) do
+        if (marking or btn._junkCoin) and btn:IsShown() and btn:GetParent():IsShown() then
+            local bag, slot = btn:GetParent():GetID(), btn:GetID()
+            local id = keep and C_Container.GetContainerItemID(bag, slot)
+            ns.PaintJunkCoin(btn, id and EUI_CategoryManager:IsJunk(id, nil, bag, slot) or false)
+        end
+    end
+end
+function ns.PaintJunkModeMarks()
+    MarkJunkPool(itemSlots, true)
+    MarkJunkPool(ns.ListRows)
+    local bank = _G.EUI_BankFrame
+    if bank and bank:IsShown() and not (ns.BankOfflineUp and ns.BankOfflineUp()) then
+        MarkJunkPool(bank._bankSlots)
+        MarkJunkPool(bank._bankRows)
+    end
+end
+
+-- Mark mode's click: only the shown slots holding the item repaint (its coin,
+-- and its grey while Desaturate is on), each by its own view's rule
+-- (ns.GridPaintJunk, ns.ListPaintJunk), so nothing moves under the cursor; the
+-- bags sort the marks into Junk when the mode ends (the item ID first: only
+-- those slots read the full item info)
+local function RepaintJunkPool(pool, itemID)
+    if not pool then return end
+    for _, btn in pairs(pool) do
+        if btn:IsShown() and btn:GetParent():IsShown() then
+            local bag, slot = btn:GetParent():GetID(), btn:GetID()
+            if C_Container.GetContainerItemID(bag, slot) == itemID then
+                local info = C_Container.GetContainerItemInfo(bag, slot)
+                if info then
+                    if btn._lvIcon then ns.ListPaintJunk(btn, info, bag, slot)
+                    else ns.GridPaintJunk(btn, info, bag, slot) end
                 end
             end
         end
-        pool = ns.ListRows
-        if not pool then break end
+    end
+end
+function ns.RepaintJunkItem(itemID)
+    RepaintJunkPool(itemSlots, itemID)
+    RepaintJunkPool(ns.ListRows, itemID)
+    local bank = _G.EUI_BankFrame
+    if bank and bank:IsShown() and not (ns.BankOfflineUp and ns.BankOfflineUp()) then
+        RepaintJunkPool(bank._bankSlots, itemID)
+        RepaintJunkPool(bank._bankRows, itemID)
     end
 end
 
@@ -327,7 +376,7 @@ EnterAssignSelectMode = function(catKey, junk)
     _assignSelectCatKey = catKey
     if junk == "sell" then
         -- Select real stacks; a merged icon may represent several different items.
-        EUI_Bags._junkDirty = true
+        -- The exit merges them again.
         EUI_Bags:RefreshInventory()
     end
 
@@ -409,15 +458,18 @@ EnterAssignSelectMode = function(catKey, junk)
 
         -- Re-tests only when the cursor or the scroll moved, or on a show
         -- (_hoverDirty); the wheel scrolls under a still cursor
-        local lastX, lastY, lastScroll
+        local lastX, lastY, lastScroll, lastBankScroll
         cf:SetScript("OnUpdate", function(self)
             local x, y = GetCursorPosition()
             local sf = EUI_Bags._scrollFrame
             local s = sf and sf:GetVerticalScroll() or 0
-            if x == lastX and y == lastY and s == lastScroll and not self._hoverDirty then return end
-            lastX, lastY, lastScroll = x, y, s
+            local junkMode = EUI_Bags._junkMode
+            local bsf = junkMode and _G.EUI_BankFrame and _G.EUI_BankFrame._scrollFrame
+            local bs = bsf and bsf:GetVerticalScroll() or 0
+            if x == lastX and y == lastY and s == lastScroll and bs == lastBankScroll and not self._hoverDirty then return end
+            lastX, lastY, lastScroll, lastBankScroll = x, y, s, bs
             self._hoverDirty = nil
-            local btn = FindBtnUnderCursor()
+            local btn = FindBtnUnderCursor(junkMode)
             if btn == hoveredBtn then return end
             ClearHover()
             if btn and btn.icon and btn.icon:IsShown() then
@@ -437,17 +489,29 @@ EnterAssignSelectMode = function(catKey, junk)
             end
         end)
 
-        cf:SetScript("OnMouseDown", function(_, button)
+        cf:SetScript("OnMouseDown", function(self, button)
             if button == "RightButton" then ClearHover(); ExitAssignSelectMode(); return end
-            -- Junk Marker: the close button still closes the bags (the coin
-            -- sits above this catcher and takes its own clicks)
             local junkMode = EUI_Bags._junkMode
+            -- Junk Marker: a click on the coin ends the mode, on its release
+            -- (OnMouseUp below), so the press does nothing here
+            local coin = junkMode and EUI_Bags._junkBtn
+            if coin and coin:IsShown() and coin:IsMouseOver() then return end
+            -- Junk Marker: the close button still closes the bags
             if junkMode and EUI_Bags._closeBtn and EUI_Bags._closeBtn:IsMouseOver() then
                 ExitAssignSelectMode()
                 EUI_Bags._closeBtn:Click()
                 return
             end
-            local btn = FindBtnUnderCursor()
+            -- Junk Marker: the open bank is part of the mode (its items are
+            -- marked like the bags'), and its close button still closes it
+            local bank = junkMode and _G.EUI_BankFrame
+            if bank and not bank:IsShown() then bank = nil end
+            if bank and bank._closeBtn and bank._closeBtn:IsMouseOver() then
+                ExitAssignSelectMode()
+                bank._closeBtn:Click()
+                return
+            end
+            local btn = FindBtnUnderCursor(junkMode)
             if btn then
                 local bagID = btn:GetParent():GetID()
                 local slotID = btn:GetID()
@@ -456,7 +520,7 @@ EnterAssignSelectMode = function(catKey, junk)
                     if info and info.itemID and _assignSelectCatKey then
                         if junkMode then
                             -- Only the item's own slots repaint, so nothing moves under
-                            -- the cursor; the bag sorts the marks when the mode ends
+                            -- the cursor; the bags sort the marks when the mode ends
                             if junkMode == "sell" then
                                 local ok, reason = EUI_CategoryManager:ToggleSellOnce(bagID, slotID)
                                 if not ok then
@@ -483,11 +547,23 @@ EnterAssignSelectMode = function(catKey, junk)
                     end
                 end
             end
-            -- Junk Marker: a click on empty bag space keeps the mode; anywhere
-            -- outside the bags, right-click or Esc ends it
-            if junkMode and EUI_Bags:IsMouseOver() then return end
+            -- Junk Marker: a click on empty bag or bank space keeps the mode;
+            -- anywhere outside the two windows, right-click or Esc ends it
+            if junkMode and (EUI_Bags:IsMouseOver() or (bank and bank:IsMouseOver())) then return end
             ClearHover()
             ExitAssignSelectMode()
+        end)
+
+        -- Junk Marker: the coin's click. In the mode the coin takes no
+        -- clicks of its own (they come here whatever its frame level is at
+        -- that moment), and the release over it ends the mode.
+        cf:SetScript("OnMouseUp", function(_, button)
+            if button ~= "LeftButton" or not EUI_Bags._junkMode then return end
+            local coin = EUI_Bags._junkBtn
+            if coin and coin:IsShown() and coin:IsMouseOver() then
+                ClearHover()
+                ExitAssignSelectMode()
+            end
         end)
 
         cf:SetAllPoints(UIParent)
@@ -498,13 +574,17 @@ EnterAssignSelectMode = function(catKey, junk)
     cf._hoverDirty = true
     cf:RegisterEvent("PLAYER_REGEN_DISABLED")
     cf:Show()
-    -- Junk Marker: the coin stays bright above the dim and takes its own
-    -- clicks above the catcher (a click on it ends the mode)
+    -- Junk Marker: the coin stays bright above the dim. Its clicks go to the
+    -- catcher while the mode is on (a click on it ends the mode there);
+    -- its hover and tooltip stay its own.
     local coin = junk and EUI_Bags._junkBtn
     if coin then
         coin:SetFrameStrata("FULLSCREEN_DIALOG")
         coin:SetFrameLevel(cf:GetFrameLevel() + 1)
+        coin:SetMouseClickEnabled(false)
     end
+    -- Every junk item shows its coin while the mode is on
+    if junk then ns.PaintJunkModeMarks() end
 end
 
 -------------------------------------------------------------------------------
@@ -607,9 +687,59 @@ local function BuildButtons()
     EUI_Bags._sellJunkBtn = sell
 end
 
+-- WoW Forever's Keyring Icon: opens the keyring popup above itself
+-- (EUI_Bags_Keyring.lua), for players who hide the bag bar. Built on the
+-- first enable, wearing the bag bar keyring button's own glyph.
+local function BuildKeyringButton()
+    local b = CreateFrame("Button", nil, EUI_Bags._bagsBtn:GetParent())
+    b:SetSize(24, 24)
+    b.icon = b:CreateTexture(nil, "ARTWORK")
+    b.icon:SetSize(19, 19)
+    b.icon:SetPoint("CENTER")
+    b.icon:SetAlpha(0.9)
+    -- The gold rim of the bag slot buttons, matching Show Bags' bag-main art
+    if C_Texture.GetAtlasInfo("bag-border") then
+        b.rim = b:CreateTexture(nil, "OVERLAY")
+        b.rim:SetAllPoints()
+        b.rim:SetAtlas("bag-border")
+        b.rim:SetAlpha(0.9)
+    end
+    local kb = _G.KeyRingButton
+    local src = _G.KeyRingButtonIconTexture
+    if not (src and src.GetTexture and src:GetTexture()) then
+        src = kb and kb.GetNormalTexture and kb:GetNormalTexture()
+    end
+    local atlas = src and src.GetAtlas and src:GetAtlas()
+    if atlas then
+        b.icon:SetAtlas(atlas)
+    elseif src and src:GetTexture() then
+        b.icon:SetTexture(src:GetTexture())
+        b.icon:SetTexCoord(src:GetTexCoord())
+    else
+        b.icon:SetTexture("Interface\\Buttons\\UI-Button-KeyRing")
+        b.icon:SetTexCoord(0, 0.5625, 0, 0.609375)
+    end
+    b:SetScript("OnEnter", function(self)
+        self.icon:SetAlpha(1)
+        if self.rim then self.rim:SetAlpha(1) end
+        -- The client's own word for it, in the client's language
+        EUI.ShowWidgetTooltip(self, _G.KEYRING or "Keyring")
+    end)
+    b:SetScript("OnLeave", function(self)
+        self.icon:SetAlpha(0.9)
+        if self.rim then self.rim:SetAlpha(0.9) end
+        EUI.HideWidgetTooltip()
+    end)
+    b:SetScript("OnClick", function(self)
+        EUI.HideWidgetTooltip()
+        if ns.ToggleKeyringWindow then ns.ToggleKeyringWindow(self) end
+    end)
+    EUI_Bags._keyringBtn = b
+end
+
 -- The header's icons (Bag Top Bar Icons), right to left from the search box:
--- Sort, Show Bags, Quick Actions and the Junk Marker's coin, each shown one left of the next
--- shown one; Sell Junk sits left of the coin while a merchant is open, and
+-- Sort, Show Bags, Quick Actions, the Junk Marker's coin and WoW Forever's Keyring, each
+-- shown one left of the next shown one; Sell Junk sits left of the coin while a merchant is open, and
 -- mark mode ends when the Junk Marker goes off. Hidden icons keep a point (the
 -- bags overview window hangs from Show Bags). Run at header build, by the
 -- options dropdown, on profile changes and on merchant open / close.
@@ -653,6 +783,16 @@ function EUI_Bags:SyncHeaderIcons()
     if junkOn and self._junkBtn then
         edge = self._sellJunkBtn:IsShown() and self._sellJunkBtn or self._junkBtn
     end
+    -- Keyring (WoW Forever only), off by default
+    local keyOn = EUI.IS_FOREVER == true and p.bagShowKeyringIcon == true
+    if keyOn and not self._keyringBtn then BuildKeyringButton() end
+    if self._keyringBtn then
+        self._keyringBtn:ClearAllPoints()
+        self._keyringBtn:SetPoint("RIGHT", edge, "LEFT", -6, 0)
+        self._keyringBtn:SetShown(keyOn)
+        if keyOn then edge = self._keyringBtn end
+    end
+    if not keyOn and self._keyringWin then self._keyringWin:Hide() end
     -- The leftmost shown icon bounds the search on Forever and the title on EUI.
     if forever then
         local search, header = self._searchBox, bags:GetParent()

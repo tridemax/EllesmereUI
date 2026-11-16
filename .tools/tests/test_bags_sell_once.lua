@@ -55,7 +55,21 @@ EllesmereUI = {
     L = function(s) return s end,
     Lf = function(s, ...) return string.format(s:gsub('%%1%$', '%%'), ...) end,
     COLOR_CODES = {BRAND = ''}, Print = function() end,
+    -- The character roster (EllesmereUI.lua): this character's table under one field
+    CharGUID = function() return owner end,
+    CharData = function(field, create)
+        local chars = EllesmereUIDB.chars
+        if not chars then chars = {}; EllesmereUIDB.chars = chars end
+        local c = chars[owner]
+        if not c then
+            if not create then return nil end
+            c = {}; chars[owner] = c
+        end
+        if create and not c[field] then c[field] = {} end
+        return c[field]
+    end,
 }
+local function SavedMarks() return EllesmereUI.CharData('bagSellOnce') end
 EllesmereUIDB = {}
 ns = {
     SpecialBags = function() return special end,
@@ -66,7 +80,7 @@ assert(loadfile('EllesmereUIBags/EllesmereUIBags_Categories.lua'))('Bags', ns)
 local CM = EUI_CategoryManager
 Put(0, 1, 100, 'item-A')
 Put(0, 2, 100, 'item-B')
-Check(not CM:IsSellOnce(100, 0, 1) and EllesmereUIDB.bagSellOnceByChar == nil, 'Reads must not create saved marks')
+Check(not CM:IsSellOnce(100, 0, 1) and SavedMarks() == nil, 'Reads must not create saved marks')
 Check(CM:ToggleSellOnce(0, 1), 'Mark an item')
 Check(CM:IsSellOnce(100, 0, 1) and not CM:IsSellOnce(100, 0, 2), 'Identical copy must remain unmarked')
 Check(not CM:IsJunk(100, 2) and CM:IsJunk(100, 2, 0, 1), 'One-time mark must not become a permanent rule')
@@ -76,11 +90,22 @@ owner = 'Player-A'
 inventory[1001], inventory[1] = inventory[1], nil
 Check(CM:IsSellOnce(100, 1, 1), 'Mark must follow a moved item')
 local saved = EllesmereUIDB
+-- Marks saved before the roster, keyed by GUID, wait there for the next load
+Put(0, 6, 106, 'pre-roster')
+saved.bagSellOnceByChar = {
+    [owner] = {['pre-roster'] = {itemID = 106, count = 1}},
+    ['Player-C'] = {['alt-item'] = {itemID = 107, count = 1}},
+}
 EUI_CategoryManager = nil
 assert(loadfile('EllesmereUIBags/EllesmereUIBags_Categories.lua'))('Bags', ns)
 CM = EUI_CategoryManager
 Check(EllesmereUIDB == saved, 'Reload must preserve saved marks')
 Check(CM:IsSellOnce(100, 1, 1), 'Mark must survive reloading the module')
+Check(CM:IsSellOnce(106, 0, 6) and SavedMarks()['pre-roster'] and saved.bagSellOnceByChar[owner] == nil,
+    'A pre-roster mark moves into the roster on the first read')
+Check(saved.bagSellOnceByChar['Player-C'], 'Another character keeps its pre-roster marks until it logs in')
+CM:ClearSellOnce('pre-roster')
+inventory[6] = nil
 CM:FinishSellOnce('item-A')
 Check(CM:IsSellOnce(100, 1, 1), 'Moved item must not be mistaken for a sale')
 CM:ToggleSellOnce(1, 1)
@@ -135,6 +160,24 @@ stack.stackCount = 5
 Check(not CM:IsSellOnce(102, 0, 3), 'Each shrink lowers the marked size')
 CM:ClampSellOnce('not a bag')
 inventory[3] = nil
+
+-- A stack that grew past its mark shows unmarked, so one click marks it again.
+local grown = Put(0, 5, 104, 'grown', 2, 3)
+CM:ToggleSellOnce(0, 5)
+grown.stackCount = 4
+Check(not CM:IsSellOnce(104, 0, 5), 'A stack that grew past its mark is not sold whole')
+Check(CM:ToggleSellOnce(0, 5) and CM:IsSellOnce(104, 0, 5), 'One click marks the grown stack again at its new size')
+Check(CM:ToggleSellOnce(0, 5) and not CM:IsSellOnce(104, 0, 5), 'The next click unmarks it')
+inventory[5] = nil
+
+-- Mark mode also reaches the open bank, but Sell Junk sells only from the bags.
+local banked = Put(-1, 1, 103, 'banked')
+Check(not CM:ToggleSellOnce(-1, 1) and not CM:IsSellOnce(103, -1, 1), 'A bank item cannot be marked for a one-time sale')
+inventory[-999], inventory[4] = nil, banked
+Check(CM:ToggleSellOnce(0, 4) and CM:IsSellOnce(103, 0, 4), 'The same item can be marked once carried')
+inventory[4], inventory[-999] = nil, banked
+Check(CM:ToggleSellOnce(-1, 1) and not CM:IsSellOnce(103, -1, 1), 'A mark banked with its item can still be removed there')
+inventory[-999] = nil
 
 -- What Sell Junk would always keep back cannot be marked, but can be unmarked.
 CM.GetSetGearLookup = function() return sets end
@@ -228,9 +271,9 @@ Put(0, 1, 100, 'carried'); Put(0, 2, 101, 'sold-by-hand')
 CM:ToggleSellOnce(0, 1); CM:ToggleSellOnce(0, 2)
 inventory[2] = nil
 _openItemPanels.merchant = false; EUI_Bags:SellJunk(); Flush()
-Check(next(EllesmereUIDB.bagSellOnceByChar[owner]) ~= nil, 'No pruning without a sweep')
+Check(next(SavedMarks()) ~= nil, 'No pruning without a sweep')
 _openItemPanels.merchant = true; refuse = true; EUI_Bags:SellJunk(); Flush()
-local left = EllesmereUIDB.bagSellOnceByChar[owner]
+local left = SavedMarks()
 Check(left['carried'] and not left['sold-by-hand'], 'A sweep drops marks of items no longer carried')
 
 -- Every Recent Items entry point uses the classification result, per instance.
@@ -279,10 +322,12 @@ function GetCursorInfo() if cursor then return 'item', 100 end end
 function ClearCursor() cursor = false end
 function EnterAssignSelectMode(_, mode) entered = mode; EUI_Bags._junkMode = mode end
 function ExitAssignSelectMode() exited = true; EUI_Bags._junkMode = nil end
-EUI_Bags.RefreshInventory = function() end
+local refreshes = 0
+EUI_Bags.RefreshInventory = function() refreshes = refreshes + 1 end
 ns.RefreshOpenBank = function() end
 junk = {SetScript = function(self, _, fn) self.click = fn end}
-local clickStart = assert(selectSource:find('    junk:SetScript("OnClick", function(self)', 1, true))
+-- The anchors below take any parameter names: a rename upstream must not break them.
+local clickStart = assert(selectSource:find('junk:SetScript%("OnClick", function%([%w_, ]*%)'))
 local clickEnd = assert(selectSource:find('    -- A double-click', clickStart, true))
 assert(loadstring(selectSource:sub(clickStart, clickEnd - 1)))()
 junk.click(junk)
@@ -313,25 +358,33 @@ wipe(pins); cursorLoc.bag = nil; tip = nil; junk.click(junk)
 Check(cursor and tip and not CM:IsSellOnce(100, 0, 1), 'A carried item from outside the bags is refused')
 C_Cursor = nil
 cursor = false
-cf = {SetScript = function(self, _, fn) self.click = fn end}
-local catcherStart = assert(selectSource:find('        cf:SetScript("OnMouseDown", function(_, button)', 1, true))
+-- The chunk also sets OnMouseUp (a release over the coin ends mark mode)
+cf = {SetScript = function(self, script, fn) if script == 'OnMouseDown' then self.click = fn end end}
+local catcherStart = assert(selectSource:find('cf:SetScript%("OnMouseDown", function%([%w_, ]*%)'))
 local catcherEnd = assert(selectSource:find('        cf:SetAllPoints(UIParent)', catcherStart, true))
 assert(loadstring(selectSource:sub(catcherStart, catcherEnd - 1)))()
 ClearHover = function() end
 FindBtnUnderCursor = function()
     return {GetID = function() return 1 end, GetParent = function() return {GetID = function() return 0 end} end}
 end
-ns.RepaintJunkItem = function() end
+ns.PaintJunkModeMarks = function() end
+local repainted
+ns.RepaintJunkItem = function(id) repainted = id end
 _assignSelectCatKey = CM.JUNK_KEY
 Put(0, 1, 100, 'clicked')
 EUI_Bags._junkMode = 'sell'
+refreshes, EUI_Bags._junkDirty = 0, nil
 cf.click(cf, 'LeftButton')
 Check(CM:IsSellOnce(100, 0, 1) and not CM:IsJunk(100, 2), 'Item click in sell mode creates only an instance mark')
+Check(repainted == 100 and EUI_Bags._junkDirty and refreshes == 0,
+    'A mark repaints its slots in place; the bags sort it into Junk when the mode ends')
 cf.click(cf, 'LeftButton')
 Check(not CM:IsSellOnce(100, 0, 1), 'Item click in sell mode also removes it')
 cf.click(cf, 'LeftButton'); EUI_Bags._junkMode = true
+refreshes = 0
 cf.click(cf, 'LeftButton')
 Check(CM:IsJunk(100, 2) and not CM:IsSellOnce(100, 0, 1), 'Permanent mode converts the selected temporary mark')
+Check(refreshes == 0, 'Permanent marks also wait for the mode to end')
 cf.click(cf, 'LeftButton')
 Check(not CM:IsJunk(100, 2, 0, 1), 'Permanent mode removes permanent junk')
 EUI_Bags._junkMode = 'sell'; cf.click(cf, 'RightButton')
@@ -344,7 +397,7 @@ local exitStart = assert(selectSource:find('local function ExitAssignSelectMode(
 local exitEnd = assert(selectSource:find("-- Select modes' hit-test:", exitStart, true))
 ExitAssignSelectMode = assert(loadstring(selectSource:sub(exitStart, exitEnd - 1) .. '\nreturn ExitAssignSelectMode'))()
 local startSource = Read('EllesmereUIBags/EUI_Bags_Start.lua')
-local showStart = assert(startSource:find('    EUI_Bags:HookScript("OnShow", function(self)', 1, true))
+local showStart = assert(startSource:find('EUI_Bags:HookScript%("OnShow", function%([%w_, ]*%)'))
 local showEnd = assert(startSource:find('        -- Controller cursor: scroll aids', showStart, true))
 EUI_Bags.HookScript = function(self, _, fn) self.onShow = fn end
 EUI_Bags.Raise = function() end
@@ -368,7 +421,6 @@ for _, exitBy in ipairs({'coin', 'right-click', 'escape', 'close'}) do
         EUI_Bags.shown = true
         EUI_Bags._junkMode = 'sell'
         EUI_Bags._assignSelectMode = true
-        EUI_Bags._junkDirty = true
         EUI_Bags:RefreshInventory()
         Check(#rendered == 2, exitBy .. ': individual stacks during selection')
         if exitBy == 'coin' then junk.click(junk)

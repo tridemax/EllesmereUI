@@ -158,14 +158,13 @@ local function ShowFlyoutName(btn)
     local fs = d.flyoutName
     if not fs then
         fs = btn:CreateFontString(nil, "OVERLAY")
-        EllesmereUI.PrimeFontShadow(fs, true)
         fs:SetTextColor(0.9, 0.9, 0.9)
         fs:SetWordWrap(false)
         fs:SetPoint("LEFT", btn, "RIGHT", FLYOUT_NAME_GAP, 0)
         d.flyoutName = fs
     end
-    fs:SetFont((EllesmereUI.GetFontPath("minimap")) or "Fonts\\FRIZQT__.TTF", 11, "")
-    fs:SetText(GetMinimapButtonLabel(btn))
+    EllesmereUI.ApplyModuleFont(fs, nil, 11, "minimap")
+    fs:SetText((GetMinimapButtonLabel(btn)))
     fs:Show()
     if not d.flyoutHitRect then
         d.flyoutHitRect = { btn:GetHitRectInsets() }
@@ -223,6 +222,17 @@ function EBS._RaiseLateFlyoutChildren(btn)
         end
     end
     raise(btn, flyoutPanel:GetFrameLevel() + 6)
+end
+
+-- Some addons re-anchor their button to the map in its own OnShow, which fires on
+-- every flyout open; this post-hook puts it back in its cell.
+local function RepinFlyoutButton(btn)
+    if not flyoutPanel or btn:GetParent() ~= flyoutPanel then return end
+    if InCombatLockdown() and btn:IsProtected() then return end
+    local d = GetFFD(btn)
+    if not d.flyoutX then return end
+    btn:ClearAllPoints()
+    btn:SetPoint("TOPLEFT", flyoutPanel, "TOPLEFT", d.flyoutX, d.flyoutY)
 end
 
 -- Keep the grid open for a press on anything parented under it (forbidden frames never).
@@ -328,6 +338,15 @@ local function LayoutFlyoutButtons()
         btn:ClearAllPoints()
         btn:SetPoint("TOPLEFT", flyoutPanel, "TOPLEFT", xOff, yOff)
         btn:SetSize(btnSize, btnSize)
+        -- A grouped button stays in its cell: no drag (the row does the same) and
+        -- re-pinned after its own OnShow.
+        local d = GetFFD(btn)
+        d.flyoutX, d.flyoutY = xOff, yOff
+        btn:RegisterForDrag()
+        if not d.flyoutShowHook then
+            d.flyoutShowHook = true
+            btn:HookScript("OnShow", RepinFlyoutButton)
+        end
         EBS._suppressVisTrack = true
         btn:SetAlpha(1)
         btn:Show()
