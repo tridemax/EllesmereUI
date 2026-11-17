@@ -500,11 +500,11 @@ local function WatchCategories()
     end
 end
 
--- the settings classifying reads (disabled categories, split set gear) as one
--- string, for the memo and the signature
+-- the settings classifying reads (disabled categories, split set gear, merged
+-- duplicates for the reagent bag) as one string, for the memo and the signature
 local function DisabledKey()
     local p = BP()
-    local dis = p.bagSplitSetGearBySet and "split|" or ""
+    local dis = (p.bagSplitSetGearBySet and "split|" or "") .. (p.bagMergeDuplicates == false and "reagent|" or "")
     for k in pairs(p.bagDisabledCategories or _emptyP) do dis = dis .. k .. "," end
     return dis
 end
@@ -550,11 +550,12 @@ local function Classified(list, bags, src)
     local items, used, total, wait = {}, 0, 0, false
     local mgr = _G.EUI_CategoryManager
     local cats = mgr and mgr:GetCategories()
-    -- the catch-all and reagent bag once, not per item; disabled categories land in the catch-all
+    -- the catch-all and reagent bag once, not per item; disabled categories land in the catch-all.
+    -- the reagent bag's items are filed by category while duplicates merge (ReagentBagSeparate)
     local catchAll, reagent
     for i, cat in ipairs(cats or {}) do
         if cat.isCatchAll then catchAll = i end
-        if cat.isReagentBag then reagent = i end
+        if cat.isReagentBag and mgr:ReagentBagSeparate() then reagent = i end
     end
     local disabled = BP().bagDisabledCategories or _emptyP
     for pos, t in ipairs(type(list) == "table" and list or {}) do

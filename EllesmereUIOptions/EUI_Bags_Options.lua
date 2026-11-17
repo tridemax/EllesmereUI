@@ -976,7 +976,7 @@ initFrame:SetScript("OnEvent", function(self)
             local gearRow
             gearRow, h = W:DualRow(parent, y,
                 { type="toggle", text="Merge Duplicate Items",
-                  tooltip="Show copies of the same item in separate bag slots as one icon or row, with their counts added together. Gear is never merged, and OneBag and MultiBag always show every slot. Merging pauses while the mail, trade, auction house, vendor, bank or guild bank window is open.",
+                  tooltip="Show copies of the same item in separate bag slots as one icon or row, with their counts added together. Gear is never merged, and OneBag and MultiBag always show every slot. Merging pauses while the mail, trade, auction house, vendor, bank or guild bank window is open. While on, reagent bag items are sorted into categories like your other items; while off, they stay in the Reagent Bag category.",
                   getValue=function() return db.profile.bagMergeDuplicates ~= false end,
                   setValue=function(v)
                       db.profile.bagMergeDuplicates = v and true or false

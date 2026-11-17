@@ -600,8 +600,9 @@ function CategoryManager:ClassifyItem(itemLink, itemID, bag, slot, quality)
 
     local cats = self:GetCategories()
 
-    -- Reagent bag items always go to the Reagent Bag category
-    if bag == 5 then
+    -- Reagent bag items go to the Reagent Bag category while duplicates are not
+    -- merged; merged, they are filed below like any other bag's
+    if bag == 5 and self:ReagentBagSeparate() then
         for i, cat in ipairs(cats) do
             if cat.isReagentBag then return i end
         end
@@ -1133,11 +1134,21 @@ function CategoryManager:CanDisableCategory(cat)
         or cat.isSpecialBag or cat.isEquipSet or cat.isVirtual)
 end
 
+-- The Reagent Bag holds the reagent bag's items only while duplicates are not
+-- merged; merged, they are filed like any other bag's, so one item in two bags
+-- shows once. The saved setting decides, not the pause while an item window is open.
+function CategoryManager:ReagentBagSeparate()
+    return BP().bagMergeDuplicates == false
+end
+
 -- A category that is turned off (dc: bagDisabledCategories, nil = none) shows
 -- nowhere; its items go to the catch-all (ClassifyAll). The set children are
--- off with the Item Set Gear anchor.
+-- off with the Item Set Gear anchor, and the Reagent Bag while duplicates merge
+-- (ReagentBagSeparate).
 function CategoryManager:IsCategoryOff(cat, dc)
-    if not dc or not cat then return false end
+    if not cat then return false end
+    if cat.isReagentBag then return not self:ReagentBagSeparate() end
+    if not dc then return false end
     if cat.isEquipSet then return dc["Item Set Gear"] and true or false end
     return (dc[cat._defaultName] and self:CanDisableCategory(cat)) and true or false
 end

@@ -578,16 +578,17 @@ local function FinishRefresh(curY, gridContentW, sidebarW, regularUsed, regularT
     if ns.OfflinePanel then ns.OfflinePanel(sidebarW) end
 end
 
--- A turned-off category (Enabled Categories, or Delete on a default one) shows
--- nowhere: while it is open, or a group whose members are all off, the bags
--- show the view they open on. Costs one category lookup per refresh (a walk of
--- the list while a group is open), nothing while no category is off.
+-- A turned-off category (Enabled Categories, Delete on a default one, or the
+-- Reagent Bag while duplicates merge) shows nowhere: while it is open, or a
+-- group whose members are all off, the bags show the view they open on. Costs
+-- one category lookup per refresh while a category is open (a walk of the list
+-- while a group is open and some category is off).
 local function LeaveTurnedOff()
     local dc = BP().bagDisabledCategories
-    if not dc then return end
     local mgr = EUI_CategoryManager
     if selectedGroupName then
-        if mgr:FirstOnMember(selectedGroupName, dc) then return end
+        -- No dc: every member is on (the sidebar never groups the Reagent Bag, noGroup)
+        if not dc or mgr:FirstOnMember(selectedGroupName, dc) then return end
         I.SetSelectedGroupName(nil)
     elseif selectedCategoryIndex > 0 then
         local cat = mgr:GetCategories()[selectedCategoryIndex]
