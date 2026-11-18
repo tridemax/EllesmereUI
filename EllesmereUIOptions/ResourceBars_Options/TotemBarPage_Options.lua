@@ -321,7 +321,7 @@ local function BuildTotemSection(parent, y, S)
         local rangeRow
         rangeRow, h = W:DualRow(parent, y,
             { type = "toggle", text = "Out of Range Warning",
-              tooltip = "Turns a totem red with a pulsing red border once you are farther than the Totem Range from where you dropped it, or from where Totemic Call moved it. Open world only: instances give no position.",
+              tooltip = "Turns a totem red with a pulsing red border once you are farther than the Totem Range from where you dropped it, or from where Totemic Call moved it. In instances, where the game gives no position, a totem turns red while the buff it gives you is missing; a totem that gives no buff shows no warning there.",
               disabled = totemOff,
               disabledTooltip = req, rawTooltip = raw,
               getValue = function() local t = T(); return t and t.rangeWarning == true or false end,

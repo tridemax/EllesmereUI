@@ -74,14 +74,21 @@ end
 --  A totem is out of range once you are farther than totemBar.rangeYards from
 --  where it landed: at your feet on its drop, or where Totemic Call moved it.
 --  A totem already down when the warning turned on has no known spot until then.
+--  Where the game gives no position (instances), a totem is out of range while
+--  the buff it gives you is missing. The buff is learned from your own aura the
+--  first time it lands, so a totem that gives none never warns there.
 -------------------------------------------------------------------------------
 local RANGE_TICK = 0.25
+local RANGE_BUFF_WAIT = 2   -- seconds a new totem's buff gets to land before its absence counts
+local RANGE_LEARN = 5       -- seconds after a drop in which an unknown buff is looked for
 local TOTEMIC_CALL = 437009  -- relocates your active totems to your location
 local rangeFrame = CreateFrame("Frame")  -- inert until the warning is turned on
 local rangeOn, rangeDown, rangeTracked, rangeMoving, rangeShowHooked = false, false, false, false, false
+local rangeAura = false  -- a totem is judged by its buff; UNIT_AURA is registered
 local rangeYards = 30
 local rangeTicker
-local rangeDrop = {}  -- slot -> { x, y, inst, start, far }
+local rangeDrop = {}  -- slot -> { x, y, inst, start, far }, or with no position { at, spell, name, icon, start, far }
+local rangeBuff = {}  -- totem spell ID -> spell ID of the buff it gives you
 local _rangeWarn = {}  -- button -> our warning frame
 
 local function PlayerPos()
@@ -139,12 +146,41 @@ local function RangeStopPoll()
     if rangeTicker then rangeTicker:Cancel(); rangeTicker = nil end
 end
 
+-- Your own untimed aura that shares the totem's icon, or whose name the totem's
+-- name starts with ("Stoneskin" for "Stoneskin Totem IV"), is the totem's buff.
+local function LearnBuff(d)
+    local icon, name = d.icon, d.name
+    for i = 1, 40 do
+        local ok, a = pcall(C_UnitAuras.GetAuraDataByIndex, "player", i, "HELPFUL")
+        if not ok or not a then return nil end
+        local id, src, dur, aIcon, aName = a.spellId, a.sourceUnit, a.duration, a.icon, a.name
+        if not (issecretvalue(id) or issecretvalue(src) or issecretvalue(dur)
+                or issecretvalue(aIcon) or issecretvalue(aName))
+           and id and src == "player" and dur == 0
+           and ((icon and aIcon == icon)
+                or (name and type(aName) == "string" and aName ~= "" and name:find(aName, 1, true) == 1)) then
+            rangeBuff[d.spell] = id
+            return id
+        end
+    end
+    return nil
+end
+
+-- Dead, or aura data withheld (restricted content): a missing buff proves nothing.
+local function BuffUnreadable()
+    local dead = UnitIsDeadOrGhost("player")
+    if issecretvalue(dead) or dead then return true end
+    local AK = EllesmereUI.AuraKit
+    return AK and AK.AurasRestricted and AK.AurasRestricted() or false
+end
+
 local function RangeMeasure()
-    if not (rangeTracked and totemBarFrame and totemBarFrame:IsVisible()) then return end
+    if not ((rangeTracked or rangeAura) and totemBarFrame and totemBarFrame:IsVisible()) then return end
     local buttons = _totemLayoutCache.buttons
     if not buttons then return end
     local x, y, inst = PlayerPos()
     local r2 = rangeYards * rangeYards
+    local unreadable  -- asked once, and only when a buff is checked
     for i = 1, #buttons do
         local btn = buttons[i]
         local slot = btn.slot
@@ -154,6 +190,21 @@ local function RangeMeasure()
             if x and inst == d.inst then
                 local dx, dy = x - d.x, y - d.y
                 far = dx * dx + dy * dy > r2
+            end
+            d.far = far
+            SetRangeWarn(btn, far)
+        elseif d and d.spell then
+            local age = GetTime() - d.at
+            local buff = rangeBuff[d.spell]
+            if not buff and age < RANGE_LEARN then buff = LearnBuff(d) end
+            local far = false
+            if buff and age >= RANGE_BUFF_WAIT then
+                if unreadable == nil then unreadable = BuffUnreadable() end
+                if not unreadable then
+                    -- Presence alone is read: the aura's fields can be secret.
+                    local ok, aura = pcall(C_UnitAuras.GetPlayerAuraBySpellID, buff)
+                    far = ok and aura == nil
+                end
             end
             d.far = far
             SetRangeWarn(btn, far)
@@ -170,16 +221,25 @@ local function RangeTick()
 end
 
 -- Events follow need: Totemic Call while a totem is down, movement while one
--- has a known spot, and the poll only while you move with the bar visible.
+-- has a known spot, your auras while one is judged by its buff, and the poll
+-- only while you move with the bar visible.
 local function RangeWatch()
     local buttons = _totemLayoutCache.buttons
-    local down, tracked = false, false
+    local down, tracked, aura = false, false, false
     if rangeOn and buttons then
         for i = 1, #buttons do
             down = true
             local slot = buttons[i].slot
             local d = not issecretvalue(slot) and rangeDrop[slot]
-            if d and d.x then tracked = true; break end
+            if d and d.x then tracked = true elseif d and d.spell then aura = true end
+        end
+    end
+    if aura ~= rangeAura then
+        rangeAura = aura
+        if aura then
+            rangeFrame:RegisterUnitEvent("UNIT_AURA", "player")
+        else
+            rangeFrame:UnregisterEvent("UNIT_AURA")
         end
     end
     if down ~= rangeDown then
@@ -218,7 +278,7 @@ local function ApplyRange()
         local btn = buttons[i]
         local slot = btn.slot
         local d = rangeOn and not issecretvalue(slot) and rangeDrop[slot]
-        SetRangeWarn(btn, d and d.x and d.far or false)
+        SetRangeWarn(btn, d and d.far or false)
     end
     RangeWatch()
 end
@@ -228,6 +288,16 @@ local function SetSpot(slot, start)
     if not d then d = {}; rangeDrop[slot] = d end
     d.x, d.y, d.inst = PlayerPos()
     d.start, d.far = start, false
+    d.at, d.spell, d.name, d.icon = nil, nil, nil, nil
+    if d.x then return end
+    -- No position here: the totem is judged by the buff it gives you.
+    local _, name, _, _, icon, _, spell = GetTotemInfo(slot)
+    d.at = GetTime()
+    if issecretvalue(spell) or type(spell) ~= "number" then return end
+    d.spell = spell
+    d.name = not issecretvalue(name) and type(name) == "string" and name or nil
+    d.icon = not issecretvalue(icon) and icon or nil
+    C_Timer.After(RANGE_BUFF_WAIT + 0.05, RangeMeasure)
 end
 
 -- A slot that emptied forgets its spot; the same totem (same start) keeps it.
@@ -238,8 +308,8 @@ local function RangeOnTotem(slot)
     if issecretvalue(have) or issecretvalue(start) then have, start = true, nil end
     local d = rangeDrop[slot]
     if not have then
-        if d then d.x, d.start, d.far = nil, nil, false end
-    elseif not (d and d.x and start and d.start == start) then
+        if d then d.x, d.at, d.spell, d.start, d.far = nil, nil, nil, nil, false end
+    elseif not (d and (d.x or d.at) and start and d.start == start) then
         SetSpot(slot, start)
     end
     ApplyRange()
@@ -263,6 +333,8 @@ rangeFrame:SetScript("OnEvent", function(_, event, arg1, _, spellID)
         RangeOnTotem(arg1)
     elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
         if not issecretvalue(spellID) and spellID == TOTEMIC_CALL then RangeOnTotemicCall() end
+    elseif event == "UNIT_AURA" then
+        RangeMeasure()
     elseif event == "PLAYER_STARTED_MOVING" then
         rangeMoving = true
         RangeMeasure()
@@ -289,8 +361,9 @@ local function RangeSetEnabled(on)
     else
         rangeFrame:UnregisterAllEvents()
         RangeStopPoll()
-        rangeDown, rangeTracked, rangeMoving = false, false, false
+        rangeDown, rangeTracked, rangeMoving, rangeAura = false, false, false, false
         wipe(rangeDrop)
+        wipe(rangeBuff)
         for btn in pairs(_rangeWarn) do SetRangeWarn(btn, false) end
     end
 end
