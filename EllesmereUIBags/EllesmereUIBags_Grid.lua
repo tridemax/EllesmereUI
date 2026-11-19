@@ -640,7 +640,7 @@ function ns.RenderGridView(tempItems, displayItems, emptySlots, child, columns, 
         end
     end
 
-    local function RenderItemBlock(blockItems)
+    local function RenderItemBlock(blockItems, interactiveEmpties)
         local n = #blockItems
         for j, data in ipairs(blockItems) do
             slotIdx = slotIdx + 1
@@ -649,7 +649,7 @@ function ns.RenderGridView(tempItems, displayItems, emptySlots, child, columns, 
                 btn:GetParent():SetParent(child)
                 local col = (j - 1) % columns
                 local row = math.floor((j - 1) / columns)
-                RenderButton(btn, data, slotIdx, col, row, startX, curY, columns)
+                RenderButton(btn, data, slotIdx, col, row, startX, curY, columns, interactiveEmpties)
             end
         end
         local remainder = n % columns
@@ -668,6 +668,33 @@ function ns.RenderGridView(tempItems, displayItems, emptySlots, child, columns, 
         local totalInBlock = n + math.max(padCount, 0)
         local blockRows = math.ceil(totalInBlock / columns)
         curY = curY - (blockRows * (SLOT_SIZE + SPACING))
+    end
+
+    -- Free reagent bag slots, or nil when there are none
+    local function ReagentEmpties()
+        local list
+        for _, d in ipairs(emptySlots) do
+            if d.bag == 5 then
+                list = list or {}
+                list[#list + 1] = d
+            end
+        end
+        return list
+    end
+
+    -- Places empties after the section's first itemCount cells; returns the new count
+    local function RenderBagEmpties(empties, itemCount)
+        for _, data in ipairs(empties) do
+            slotIdx = slotIdx + 1
+            local btn = GetOrCreateSlot(slotIdx)
+            if btn then  -- nil during combat (avoids minting tainted secure buttons)
+                btn:GetParent():SetParent(child)
+                RenderButton(btn, data, slotIdx, itemCount % columns, math.floor(itemCount / columns),
+                    startX, curY, columns, true)
+                itemCount = itemCount + 1
+            end
+        end
+        return itemCount
     end
 
     -- Compact Armory layout. Reuses the existing slot, sub-header, empty-pad,
@@ -1146,9 +1173,10 @@ function ns.RenderGridView(tempItems, displayItems, emptySlots, child, columns, 
         local headerIdx = 0
         local expSubIdx = 0
 
-        local function RenderSection(sectionName, sectionItems, isUserCreated, showPinAdd, alwaysShow, assignCatIdx, nestByExpansion)
+        -- bagEmpties: free slots drawn after the items; they keep an empty section shown
+        local function RenderSection(sectionName, sectionItems, isUserCreated, showPinAdd, alwaysShow, assignCatIdx, nestByExpansion, bagEmpties)
             local itemCount = #sectionItems
-            if itemCount == 0 and not isUserCreated and not showPinAdd and not alwaysShow then return end
+            if itemCount == 0 and not isUserCreated and not showPinAdd and not alwaysShow and not bagEmpties then return end
 
             local useSlotNest = armorySlotGrouping
                 and IsGearOnlyGroup(sectionName)
@@ -1175,7 +1203,11 @@ function ns.RenderGridView(tempItems, displayItems, emptySlots, child, columns, 
                 end
                 local kind = (showPinAdd and "pinned") or (alwaysShow and "recent")
                     or (useSlotNest and "slot") or (useExpNest and "exp") or "flat"
-                ns.CompactBagsSection(label, sectionItems, kind, assignKey)
+                ns.CompactBagsSection(label, sectionItems, kind, assignKey, bagEmpties and true)
+                -- Compact enables mouse per group: free slots need their own
+                if bagEmpties then
+                    ns.CompactBagsSlots(EllesmereUI.L("Empty Slots") .. " (" .. #bagEmpties .. ")", bagEmpties)
+                end
                 return
             end
 
@@ -1281,6 +1313,19 @@ function ns.RenderGridView(tempItems, displayItems, emptySlots, child, columns, 
                             end
                         end
                     end
+                    if bagEmpties then
+                        expSubIdx = expSubIdx + 1
+                        local sh = GetOrCreateExpSubHeader(expSubIdx)
+                        sh:SetParent(child)
+                        sh:ClearAllPoints()
+                        sh:SetPoint("TOPLEFT", child, "TOPLEFT", startX, curY)
+                        sh:SetWidth(gridW)
+                        sh._label:SetText(EllesmereUI.L("Empty Slots") .. " (" .. #bagEmpties .. ")")
+                        SetBagFont(sh._label, math.max(8, catTitleSize - 2))
+                        sh:Show()
+                        curY = curY - 18
+                        RenderItemBlock(bagEmpties, true)
+                    end
                     curY = curY - 6
                     return
                 end
@@ -1341,6 +1386,8 @@ function ns.RenderGridView(tempItems, displayItems, emptySlots, child, columns, 
                     end
                 end
             end
+
+            if bagEmpties then itemCount = RenderBagEmpties(bagEmpties, itemCount) end
 
             local remainder = itemCount % columns
             local padCount
@@ -1447,7 +1494,8 @@ function ns.RenderGridView(tempItems, displayItems, emptySlots, child, columns, 
                         catItems = folded or catItems
                     end
                     local isUserCreated = cat.isUserCreated
-                    RenderSection(cat.name, catItems, isUserCreated, cat.isPinned, cat.isRecent, ci, true)
+                    RenderSection(cat.name, catItems, isUserCreated, cat.isPinned, cat.isRecent, ci, true,
+                        cat.isReagentBag and ReagentEmpties() or nil)
                 end
             end
         end
@@ -1752,6 +1800,7 @@ function ns.RenderGridView(tempItems, displayItems, emptySlots, child, columns, 
             local useSlotNest = armorySlotGrouping
                 and selCat and IsArmoryGearCategory(selCat)
                 and itemCount > 0
+            local bagEmpties = selCat and selCat.isReagentBag and ReagentEmpties()
 
             if compactOn then
                 local aKey
@@ -1767,6 +1816,9 @@ function ns.RenderGridView(tempItems, displayItems, emptySlots, child, columns, 
                     hint = EllesmereUI.L("Extra quickview display, your items are also in their category")
                 end
                 ns.CompactBagsSection(headerName or "", displayItems, useSlotNest and "slot" or "flat", aKey, true, hint)
+                if bagEmpties then
+                    ns.CompactBagsSlots(EllesmereUI.L("Empty Slots") .. " (" .. #bagEmpties .. ")", bagEmpties)
+                end
             elseif useSlotNest then
                 local expSubIdx = 0
                 local buckets = BuildSlotBuckets(displayItems)
@@ -1786,6 +1838,8 @@ function ns.RenderGridView(tempItems, displayItems, emptySlots, child, columns, 
                     RenderButton(btn, data, slotIdx, col, row, startX, curY, columns)
                 end
             end
+
+            if bagEmpties then itemCount = RenderBagEmpties(bagEmpties, itemCount) end
 
             local remainder = itemCount % columns
             local padCount

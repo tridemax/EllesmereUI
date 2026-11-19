@@ -1136,9 +1136,9 @@ end
 
 -- The Reagent Bag holds the reagent bag's items only while duplicates are not
 -- merged; merged, they are filed like any other bag's, so one item in two bags
--- shows once. The saved setting decides, not the pause while an item window is open.
+-- shows once. An open item panel pauses merging, so it counts as not merged.
 function CategoryManager:ReagentBagSeparate()
-    return BP().bagMergeDuplicates == false
+    return BP().bagMergeDuplicates == false or ns.AnyItemPanelOpen()
 end
 
 -- A category that is turned off (dc: bagDisabledCategories, nil = none) shows

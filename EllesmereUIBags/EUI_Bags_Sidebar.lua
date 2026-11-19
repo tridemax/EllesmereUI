@@ -1412,6 +1412,34 @@ local function ShowCategoryContextMenu(btn, catIdx, isGroupHeader, isGroupMember
     end)
 end
 
+-- Drops the cursor item on a category row; returns true when the row took it.
+local function DropCursorItemOnRow(self)
+    local idx = self._catIdx
+    if not idx or idx <= 0 then return false end
+    local cursorType, itemID = GetCursorInfo()
+    if cursorType ~= "item" or not itemID then return false end
+    local mgr = EUI_CategoryManager
+    local cats = mgr:GetCategories()
+    local cat = cats[idx]
+    if cat and cat.isReagentBag then
+        -- PutItemInBag equips a bag or quiver into the slot instead of storing it
+        local _, _, _, _, _, classID = C_Item.GetItemInfoInstant(itemID)
+        if classID == Enum.ItemClass.Container or classID == Enum.ItemClass.Quiver then return false end
+        PutItemInBag(C_Container.ContainerIDToInventoryID(5))
+        return true
+    end
+    -- A header's _catIdx is its first member even when that member is off
+    if self._isGroupHeader and self._groupName then
+        idx = mgr:FirstOnMember(self._groupName, BP().bagDisabledCategories)
+        cat = idx and cats[idx]
+    end
+    if not (cat and mgr:CanAssignToCategory(idx)) then return false end
+    mgr:AssignItem(itemID, cat._defaultName)
+    ClearCursor()
+    EUI_Bags:RefreshInventory()
+    return true
+end
+
 local function BuildSidebarButtons(categoryCounts, totalCount)
     local sidebar = EUI_Bags._sidebar
     if not sidebar then return end
@@ -1643,28 +1671,7 @@ local function BuildSidebarButtons(categoryCounts, totalCount)
                     end
                     return
                 end
-                -- Drag-to-sidebar: if the cursor holds an item, assign it to this
-                -- category; a group's header files it in the group's first member
-                -- that is on (the header row's own index stays its first member)
-                if self._catIdx and self._catIdx > 0 then
-                    local cursorType, cursorItemID = GetCursorInfo()
-                    if cursorType == "item" and cursorItemID then
-                        local target = self._catIdx
-                        if self._isGroupHeader and self._groupName then
-                            target = EUI_CategoryManager:FirstOnMember(self._groupName, BP().bagDisabledCategories)
-                        end
-                        if target and EUI_CategoryManager:CanAssignToCategory(target) then
-                            local cats = EUI_CategoryManager:GetCategories()
-                            local cat = cats[target]
-                            if cat then
-                                EUI_CategoryManager:AssignItem(cursorItemID, cat._defaultName)
-                                ClearCursor()
-                                EUI_Bags:RefreshInventory()
-                                return
-                            end
-                        end
-                    end
-                end
+                if DropCursorItemOnRow(self) then return end
                 if self._didDrag then self._didDrag = false; return end
                 if self._isGroupHeader and self._groupName then
                     SetSelectedGroupName(self._groupName)
@@ -1679,6 +1686,7 @@ local function BuildSidebarButtons(categoryCounts, totalCount)
                 if EUI_Bags._scrollFrame then EUI_Bags._scrollFrame:SetVerticalScroll(0) end
                 EUI_Bags:RefreshInventory()
             end)
+            btn:SetScript("OnReceiveDrag", DropCursorItemOnRow)
             btn:SetScript("OnMouseDown", function(self, button)
                 if button ~= "LeftButton" then return end
                 -- Equip-set cats and Junk: ReorderCategory rejects them; don't start the drag either

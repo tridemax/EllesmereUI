@@ -500,11 +500,13 @@ local function WatchCategories()
     end
 end
 
--- the settings classifying reads (disabled categories, split set gear, merged
--- duplicates for the reagent bag) as one string, for the memo and the signature
+-- the settings classifying reads (disabled categories, split set gear, the
+-- reagent bag rule) as one string, for the memo and the signature
 local function DisabledKey()
     local p = BP()
-    local dis = (p.bagSplitSetGearBySet and "split|" or "") .. (p.bagMergeDuplicates == false and "reagent|" or "")
+    local mgr = _G.EUI_CategoryManager
+    local reagent = mgr and mgr:ReagentBagSeparate()
+    local dis = (p.bagSplitSetGearBySet and "split|" or "") .. (reagent and "reagent|" or "")
     for k in pairs(p.bagDisabledCategories or _emptyP) do dis = dis .. k .. "," end
     return dis
 end

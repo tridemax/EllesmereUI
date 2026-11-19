@@ -108,6 +108,8 @@ local function SetItemPanelOpen(key, open)
     if not merges then SetPaintedPanelOpen(any) end
     return merges
 end
+-- Read through ns by CategoryManager:ReagentBagSeparate (its file loads before the internals)
+function ns.AnyItemPanelOpen() return _anyItemPanelOpen end
 
 -- Pre-cache sort fields onto item data tables to avoid API calls in comparator.
 -- The per-table _sortCached flag only covers repeats within one pass: every
