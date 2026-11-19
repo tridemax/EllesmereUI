@@ -343,11 +343,12 @@ end
 
 -- One provider per custom buff spell ID, made on first use. Its aura IDs are
 -- the spell's own forms (typed, override, base), as on a buff bar.
-local function BuffProvider(sid)
-    local p = buffProviders[sid]
+local function BuffProvider(sid, key)
+    key = key or sid
+    local p = buffProviders[key]
     if p then return p end
     p = {
-        key = "buff:" .. sid,
+        key = "buff:" .. key,
         tip = sid,
         Include = function()
             local set = _AC.AddSpellForms({}, sid)
@@ -362,7 +363,7 @@ local function BuffProvider(sid)
         end,
         Desaturate = function() return true end,
     }
-    buffProviders[sid] = p
+    buffProviders[key] = p
     return p
 end
 
@@ -370,6 +371,17 @@ end
 -- frame on this bar.
 function ns.CDM_AuraIconForBuff(barKey, sid)
     return Place(barKey, BuffProvider(sid))
+end
+
+-- The player has this aura but the bound Blizzard buff item is hidden.
+function ns.CDM_AuraIconForViewerBuff(barKey, sid, cooldownID, layoutIndex)
+    local bar = ns.cdmBarFrames[barKey]
+    if not bar then return end
+    local f = Place(barKey, BuffProvider(sid, "viewer:" .. cooldownID .. ":" .. sid))
+    if f:GetParent() ~= bar then f:SetParent(bar) end
+    f.cooldownID, f.layoutIndex = cooldownID, layoutIndex
+    f:Show()
+    return f
 end
 
 -------------------------------------------------------------------------------

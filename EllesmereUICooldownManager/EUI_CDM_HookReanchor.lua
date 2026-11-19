@@ -85,6 +85,29 @@ local _scratch_cdFrames = {}    -- CD/utility: barKey -> {frame, frame, ...}
 -- Phase 4 sweep must leave these alone rather than park them offscreen.
 local _scratch_unresolved = {}
 
+local function PlayerBuffSpell(cache, sid)
+    if issecretvalue(sid) or type(sid) ~= "number" or sid <= 0 then return end
+    if cache[sid] == nil then
+        local ok, aura = pcall(C_UnitAuras.GetPlayerAuraBySpellID, sid)
+        cache[sid] = ok and not issecretvalue(aura) and aura ~= nil
+            and not issecretvalue(aura.isHelpful) and aura.isHelpful == true
+    end
+    if cache[sid] then return sid end
+end
+
+local function VisibleBuffSlot(frame, playerAuras)
+    local shown = frame:IsShown()
+    local id = frame.cooldownID
+    if issecretvalue(shown) or issecretvalue(id) or not id then return end
+    if shown then return id end
+    local info = frame.cooldownInfo
+    if issecretvalue(info) or not info then return end
+    local sid = PlayerBuffSpell(playerAuras, info.overrideSpellID) or PlayerBuffSpell(playerAuras, info.spellID)
+    -- A negative spell ID distinguishes our aura slot from Blizzard showing its own later.
+    if sid then return -sid end
+end
+I.VisibleBuffSlot = VisibleBuffSlot
+
 local function _sortByLayoutIndex(a, b)
     return (a.layoutIndex or 0) < (b.layoutIndex or 0)
 end
@@ -156,6 +179,11 @@ local function CollectAndReanchor()
     wipe(_scratch_usedFrames)
     wipe(_scratch_activeFrames)
     wipe(_scratch_unresolved)
+    local talentBuffs = ns._talentSetBuffs
+    if talentBuffs then
+        wipe(talentBuffs.visibleSlots)
+        talentBuffs.visibleCount = 0
+    end
     local allActiveFrames = _scratch_activeFrames
     local usedFrames = _scratch_usedFrames
     local unresolvedFrames = _scratch_unresolved
@@ -202,6 +230,14 @@ local function CollectAndReanchor()
         if viewer and viewer.itemFramePool and viewer.itemFramePool.EnumerateActive then
             local isBuff = (defaultBarKey == "buffs")
             for frame in viewer.itemFramePool:EnumerateActive() do
+                local slot
+                if isBuff and talentBuffs then
+                    slot = VisibleBuffSlot(frame, talentBuffs.playerAuras)
+                    if slot then
+                        talentBuffs.visibleSlots[frame] = slot
+                        talentBuffs.visibleCount = talentBuffs.visibleCount + 1
+                    end
+                end
                 if IsFrameIncluded(frame) then
                     allActiveFrames[frame] = true
 
@@ -224,9 +260,14 @@ local function CollectAndReanchor()
                                     or (baseSID and ns._buffReplaceTarget[baseSID]) or nil
                             end
                             if dedupKey and not barSeen[dedupKey] then
-                                if frame:IsShown() then
-                                    -- Active buff: route Blizzard's real frame.
-                                    local tbd = barDataByKey[targetBar]
+                                local tbd = barDataByKey[targetBar]
+                                local fallback
+                                if slot and slot < 0 and tbd and tbd.enabled and tbd.barType == "buffs"
+                                   and not tbd.isGhostBar and ns.CDM_AuraIconForViewerBuff then
+                                    fallback = ns.CDM_AuraIconForViewerBuff(targetBar, -slot, dedupKey, frame.layoutIndex)
+                                end
+                                if fallback or frame:IsShown() then
+                                    local frame = fallback or frame
                                     if tbd and tbd.barType ~= "buffs" and tbd.barType ~= "custom_buff" then
                                         -- HOSTED buff on a CD/util bar: push the real frame into the
                                         -- CD pipeline (cdFrames) so Phase 3 sorts it with cooldowns by

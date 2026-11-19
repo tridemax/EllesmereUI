@@ -93,8 +93,6 @@ end
 
 -------------------------------------------------------------------------------
 --  Cooldown Manager layouts (the game's own)
---  A switch from addon code taints the game's Cooldown Manager until a
---  reload, so every switch offers one.
 -------------------------------------------------------------------------------
 -- nil until the game has loaded its layouts.
 local function LayoutManager()
@@ -131,45 +129,67 @@ local function SwitchLayout(id)
         Say(EllesmereUI.Lf("Cooldown Manager layout %s not switched to: its settings have unsaved changes.", name))
         return
     end
-    if not pcall(s.SetActiveLayoutByID, s, id) then
+    if not pcall(s.SetActiveLayoutByID, s, id) or lm:GetActiveLayoutID() ~= id then
         Say(EllesmereUI.Lf("Could not switch the Cooldown Manager layout to %s.", name))
         return
     end
     Announce(EllesmereUI.Lf("Switched the Cooldown Manager layout to %s.", name))
     local cdm = EllesmereUI._ModuleNS and EllesmereUI._ModuleNS.EllesmereUICooldownManager
-    if cdm and cdm.ResyncWithBlizzardLayout then cdm.ResyncWithBlizzardLayout() end
-    -- A confirm, not RequestReload: an event cannot reload, its click can.
-    EllesmereUI:ShowConfirmPopup({
-        title       = EllesmereUI.L("Reload Required"),
-        message     = EllesmereUI.L("The Cooldown Manager layout was switched. Reload so its cooldowns and buffs update."),
-        confirmText = EllesmereUI.L("Reload Now"),
-        cancelText  = EllesmereUI.L("Later"),
-        reload      = true,
-    })
+    if cdm and cdm.RebuildForTalentSetLayout then
+        C_Timer.After(0, cdm.RebuildForTalentSetLayout)
+    end
 end
 
 -------------------------------------------------------------------------------
 --  Apply
 -------------------------------------------------------------------------------
-local function ApplyBindings()
-    if not IsEnabled() then return end
+local layoutChanged = "CooldownViewerSettings.OnDataChanged"
+local bindingsPending = false
+local ApplyBindings
+
+local function ResumeAfterLayout()
+    EventRegistry:UnregisterCallback(layoutChanged, ev)
+    -- Let Blizzard finish notifying its viewers and saving its spec layout.
+    C_Timer.After(0, ApplyBindings)
+end
+
+ApplyBindings = function()
+    if not bindingsPending or not IsEnabled() then return end
     if InCombatLockdown() then
         EllesmereUI.CombatQueue.Defer("TalentSets", ApplyBindings)
         return
     end
     local b = Binding(ActiveSet())
+    if b and b.layout then
+        local settings = CooldownViewerSettings
+        local provider = settings and settings:GetDataProvider()
+        if provider and provider.IsLayoutUpdateQueued and provider:IsLayoutUpdateQueued() then
+            EventRegistry:RegisterCallback(layoutChanged, ResumeAfterLayout, ev)
+            return
+        end
+    end
+    bindingsPending = false
     if not b then return end
-    if b.gear then EquipGear(b.gear) end
     if b.layout then SwitchLayout(b.layout) end
+    if b.gear then EquipGear(b.gear) end
+end
+
+local function CancelPendingBindings()
+    if bindingsPending then
+        bindingsPending = false
+        EventRegistry:UnregisterCallback(layoutChanged, ev)
+    end
 end
 
 -- A switch starts with ACTIVE_TALENT_GROUP_CHANGED and ends with PLAYER_SPECIALIZATION_CHANGED.
 -- Apply a frame after the end, once the game has finished the switch.
 ev:SetScript("OnEvent", function(_, event)
     if event == "ACTIVE_TALENT_GROUP_CHANGED" then
+        CancelPendingBindings()
         switching = true
     elseif switching then
         switching = false
+        bindingsPending = true
         C_Timer.After(0, ApplyBindings)
     end
 end)
@@ -181,6 +201,12 @@ local function Apply()
     else
         ev:UnregisterAllEvents()
         switching = false
+        CancelPendingBindings()
+        local cdm = EllesmereUI._ModuleNS and EllesmereUI._ModuleNS.EllesmereUICooldownManager
+        if cdm and cdm._talentSetBuffs then
+            cdm._talentSetBuffs = nil
+            cdm.QueueReanchor()
+        end
     end
 end
 

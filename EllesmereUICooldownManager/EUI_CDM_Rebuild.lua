@@ -1187,7 +1187,7 @@ function ns.FullCDMRebuild(reason)
     -- Full-wipe reasons: clear per-frame caches and run a direct reanchor.
     -- Used for talent change and any path where spell IDs behind
     -- cooldownIDs may have changed (so cached resolvedSid is stale).
-    local isFullWipe = (reason == "talent_reconcile")
+    local isFullWipe = reason == "talent_reconcile" or reason == "blizzard_layout"
 
     -- 1. Wipe all caches
     if ns.MarkCDMSpellCacheDirty then ns.MarkCDMSpellCacheDirty() end
@@ -1227,8 +1227,7 @@ function ns.FullCDMRebuild(reason)
     if ns.BuildTrackedBuffBars then ns.BuildTrackedBuffBars() end
 
     -- 6. Full-wipe path: wipe per-frame caches + icon arrays + anchor
-    -- state, then reanchor directly. Used by talent_reconcile when spell
-    -- IDs behind cooldownIDs may have changed.
+    -- state, then reanchor directly against the current viewer pools.
     --
     -- Non-full-wipe reasons don't need an explicit reanchor here: the
     -- BuildAllCDMBars call above already queued a reanchor when hooks

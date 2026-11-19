@@ -25,10 +25,22 @@ local _smHookedIcons, SwiftmendEnabled = I._smHookedIcons, I.SwiftmendEnabled
 local ProcessPresetCooldowns = I.ProcessPresetCooldowns
 local CollectAndReanchor, UpdateCustomBuffBars = I.CollectAndReanchor, I.UpdateCustomBuffBars
 local QueueViewerAnchor, RestoreViewerAnchors = I.QueueViewerAnchor, I.RestoreViewerAnchors
+local VisibleBuffSlot = I.VisibleBuffSlot
 
 local reanchorDirty = false
 local reanchorFrame = nil
 local viewerHooksInstalled = false
+
+local function InvalidateViewerActivity()
+    ns._acGen = (ns._acGen or 0) + 1
+    ns._btDirty = true
+    if ns.ArmBuffTicker then ns.ArmBuffTicker() end
+end
+
+local function HasViewerAura(frame)
+    local fromAura = frame.wasSetFromAura
+    return type(frame.auraInstanceID) == "number" or (not issecretvalue(fromAura) and fromAura == true)
+end
 
 -------------------------------------------------------------------------------
 --  Queue claimed icons after active-state changes without interrupting a
@@ -117,8 +129,7 @@ function ns.SyncExtraBuffBarsWithViewer()
     QueueReanchor()
 end
 
--- After Blizzard's CDM layouts change: its settings panel closed, or Talent
--- Set Bindings (Forever Essentials) switched the layout.
+-- After Blizzard's CDM settings panel closes.
 -- In-place edits to the ACTIVE Blizzard layout (spell added to the layout
 -- you are already on) do not change its layout id, so the spec+layout
 -- auto-reseed gate would never re-materialize them. Wipe the session table
@@ -142,11 +153,28 @@ function ns.ResyncWithBlizzardLayout()
     end)
 end
 
+-- Forever talent groups share a spec key. Blizzard can give the same viewer
+-- frames new cooldowns, so a preset switch needs the spec-change cache reset.
+function ns.RebuildForTalentSetLayout()
+    local profile = ECME.db and ECME.db.profile
+    if not viewerHooksInstalled or not (profile and profile.cdmBars and profile.cdmBars.enabled) then return end
+    if InCombatLockdown() then
+        ns.CombatQueue.Defer("CDMTalentSetLayout", ns.RebuildForTalentSetLayout)
+        return
+    end
+    if ns._reseededSpecsSession then wipe(ns._reseededSpecsSession) end
+    if EllesmereUI._TalentSets and EllesmereUI._TalentSets.Get("enabled") then
+        ns._talentSetBuffs = { playerAuras = {}, visibleSlots = {}, visibleCount = 0 }
+    end
+    InvalidateViewerActivity()
+    ns.FullCDMRebuild("blizzard_layout")
+end
+
 -------------------------------------------------------------------------------
 --  SetupViewerHooks (mixin hooks)
 --
 --  Hook strategy:
---    1. OnCooldownIDSet on all 4 Blizzard CDM mixins -> QueueReanchor
+--    1. OnCooldownIDSet on the Blizzard CDM item mixins
 --    2. Pool Acquire on all viewers -> QueueReanchor
 --    3. Viewer Layout -> QueueReanchor (catches frame removals)
 --    4. Buff ticker (0.1s) for staleness + glow
@@ -160,7 +188,7 @@ function ns.SetupViewerHooks()
     reanchorFrame:SetScript("OnUpdate", ProcessReanchorQueue)
     reanchorFrame:Hide()
 
-    -- 1. Mixin hooks: detect spell changes on CDM frames. Reset frame spell
+    -- 1. Detect spell changes on CDM frames. Reset frame spell
     --    cache so the next reanchor re-resolves the spellID (handles transforms
     --    like Avenging Crusader -> Crusader Strike). CD/utility bars: spell set
     --    is locked during a session (changes only via FullCDMRebuild on
@@ -170,10 +198,7 @@ function ns.SetupViewerHooks()
     --    for the next rebuild. Buff bars ARE dynamic (appear/disappear at
     --    runtime), so they still need real-time OnCooldownIDSet reanchors.
     local function ResetFrameCache(frame)
-        -- Content churn: re-arm the buff ticker's dirty + pool gates.
-        ns._acGen = (ns._acGen or 0) + 1
-        ns._btDirty = true
-        if ns.ArmBuffTicker then ns.ArmBuffTicker() end
+        InvalidateViewerActivity()
         if frame then
             local fc = _ecmeFC[frame]
             if fc then
@@ -184,7 +209,6 @@ function ns.SetupViewerHooks()
             end
         end
     end
-    -- Buff mixins: clear cache + reanchor (dynamic)
     if CooldownViewerBuffIconItemMixin and CooldownViewerBuffIconItemMixin.OnCooldownIDSet then
         hooksecurefunc(CooldownViewerBuffIconItemMixin, "OnCooldownIDSet", function(frame)
             ResetFrameCache(frame)
@@ -193,9 +217,6 @@ function ns.SetupViewerHooks()
     end
     if CooldownViewerBuffBarItemMixin and CooldownViewerBuffBarItemMixin.OnCooldownIDSet then
         hooksecurefunc(CooldownViewerBuffBarItemMixin, "OnCooldownIDSet", function(frame)
-            ns._acGen = (ns._acGen or 0) + 1
-            ns._btDirty = true
-            if ns.ArmBuffTicker then ns.ArmBuffTicker() end
             if ns.InvalidateTBBFrameCache then ns.InvalidateTBBFrameCache() end
             ResetFrameCache(frame)
             QueueReanchor()
@@ -249,7 +270,7 @@ function ns.SetupViewerHooks()
                         _activeStateReanchorPending = false
                         QueueReanchor()
                     end)
-                    local isBarViewer = viewer == _G["BuffBarCooldownViewer"]
+                    local isBarViewer = viewer == _G.BuffBarCooldownViewer
                     hooksecurefunc(frame, "OnActiveStateChanged", function(itemFrame)
                         -- Wake a parked Tracking Bars tick when this item activates (a
                         -- deactivation has nothing to show): the sleeper's probe can run
@@ -277,9 +298,7 @@ function ns.SetupViewerHooks()
             local isBuff = (vi == 3 or vi == 4) -- BuffIcon or BuffBar
             local isBarViewer = (vi == 4) -- BuffBarCooldownViewer
             hooksecurefunc(v.itemFramePool, "Acquire", function()
-                ns._acGen = (ns._acGen or 0) + 1
-                ns._btDirty = true
-                if ns.ArmBuffTicker then ns.ArmBuffTicker() end
+                InvalidateViewerActivity()
                 if isBuff then InstallBuffFrameHooks(v) end
                 if isBarViewer and ns.InvalidateTBBFrameCache then
                     ns.InvalidateTBBFrameCache()
@@ -506,7 +525,6 @@ function ns.SetupViewerHooks()
             local antiClip = ns.CDM_ANTI_CLIP
             local p = ECME and ECME.db and ECME.db.profile
             if not p or not p.cdmBars or not p.cdmBars.bars then return true end
-            local needsReanchor = false
             for _, bd in ipairs(p.cdmBars.bars) do
                 if bd.enabled then
                     local isBuff = (bd.barType == "buffs" or bd.key == "buffs" or bd.barType == "custom_buff")
@@ -528,8 +546,7 @@ function ns.SetupViewerHooks()
                                     or frame._isPlaceholderFrame or false
                                 if fc and fc._missingN then ns.MissingRecheck(frame, fc) end
 
-                                local isActiveBuff = (frame.wasSetFromAura == true
-                                    or frame.auraInstanceID ~= nil)
+                                local isActiveBuff = HasViewerAura(frame)
                                 -- Totems and other non-aura buff-viewer items never set
                                 -- wasSetFromAura/auraInstanceID even while up, so the aura
                                 -- check above misses them. But Blizzard only SHOWS a buff
@@ -833,7 +850,6 @@ function ns.SetupViewerHooks()
                     end
                 end
             end
-            if needsReanchor then QueueReanchor() end
             -- Refresh aura active cache. This is the sole maintainer of _activeCache;
             -- bar glow overlays read from ns._tickBlizzActiveCache. Walk the live
             -- pools and mark any frame whose Blizzard-set
@@ -864,8 +880,16 @@ function ns.SetupViewerHooks()
                     -- auraInstanceID. Mirrors the buff-bar glow logic in BuffTicker.
                     local isBuffViewer = (vi >= 3)
                     if vf and vf.itemFramePool and vf.itemFramePool.EnumerateActive then
+                        local talentBuffs = vi == 3 and p.cdmBars.enabled and ns._initialReanchorDone and ns._talentSetBuffs
+                        local visibleCount, slotsChanged = 0, false
                         for frame in vf.itemFramePool:EnumerateActive() do
-                            local active = frame.wasSetFromAura == true or frame.auraInstanceID ~= nil
+                            -- UNIT_AURA can update an existing slot without acquiring an item.
+                            if talentBuffs then
+                                local slot = VisibleBuffSlot(frame, talentBuffs.playerAuras)
+                                if slot then visibleCount = visibleCount + 1 end
+                                if talentBuffs.visibleSlots[frame] ~= slot then slotsChanged = true end
+                            end
+                            local active = HasViewerAura(frame)
                             if not active and isBuffViewer and frame:IsShown()
                                and not frame._isPlaceholderFrame then
                                 active = true
@@ -917,6 +941,9 @@ function ns.SetupViewerHooks()
                                     end
                                 end
                             end
+                        end
+                        if talentBuffs and (slotsChanged or visibleCount ~= talentBuffs.visibleCount) then
+                            QueueReanchor()
                         end
                     end
                 end
@@ -973,8 +1000,11 @@ function ns.SetupViewerHooks()
         -- one, so without it a tracked debuff's glow could only be picked up by the
         -- 1s staleness net below, or not at all once the ticker had settled.
         cdmBuffTickFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
-        cdmBuffTickFrame:SetScript("OnEvent", function(_, event, _, updateInfo)
+        cdmBuffTickFrame:SetScript("OnEvent", function(_, event, unit, updateInfo)
             ns._btDirty = true
+            if ns._talentSetBuffs and event == "UNIT_AURA" and unit == "player" then
+                wipe(ns._talentSetBuffs.playerAuras)
+            end
             -- Gen bump on anything that can CHANGE which auras are active: additions
             -- (a glow must LIGHT), plus anything that can release a pool frame --
             -- removals/full updates, totem drops/despawns, world entry. Additions
@@ -987,31 +1017,18 @@ function ns.SetupViewerHooks()
             -- window. Only UNIT_AURA carries an updateInfo table in this slot --
             -- PLAYER_ENTERING_WORLD's second arg is the isReconnect BOOLEAN (true on
             -- /reload), so the payload must never be indexed for the other events.
-            if event ~= "UNIT_AURA" then
+            if event ~= "UNIT_AURA" or issecretvalue(updateInfo) or not updateInfo then
                 ns._acGen = (ns._acGen or 0) + 1
-            elseif updateInfo then
-                -- SECRET-SAFE: the payload TABLE and each of its fields can all arrive
-                -- secret in instanced content, and a secret can never be boolean-tested
-                -- in Lua (a hard error, not a falsy read). So: guard the table before
-                -- indexing it, bind fields to locals (reading a secret is always
-                -- legal), then issecretvalue-gate every test. When unreadable, assume
-                -- churn -- one extra pool rebuild costs far less than a cache still
-                -- holding released frames. Same guard shape as the lust listener in EUI_CDM_BuffBarPresets.lua.
-                if issecretvalue(updateInfo) then
+            else
+                local full    = updateInfo.isFullUpdate
+                local removed = updateInfo.removedAuraInstanceIDs
+                local added   = updateInfo.addedAuras
+                -- A stack-gated glow also needs updates to already-bound auras.
+                local updated = ns._barGlowStackSids and updateInfo.updatedAuraInstanceIDs
+                if issecretvalue(full) or issecretvalue(removed)
+                   or issecretvalue(added) or issecretvalue(updated)
+                   or full or removed or added or updated then
                     ns._acGen = (ns._acGen or 0) + 1
-                else
-                    local full    = updateInfo.isFullUpdate
-                    local removed = updateInfo.removedAuraInstanceIDs
-                    local added   = updateInfo.addedAuras
-                    -- A stack change arrives as an UPDATE (no add/remove), so a
-                    -- stack-gated Bar Glow's count stayed stale until some other
-                    -- edge. Read only while a stack-gated glow exists (nil otherwise).
-                    local updated = ns._barGlowStackSids and updateInfo.updatedAuraInstanceIDs
-                    if issecretvalue(full) or issecretvalue(removed)
-                       or issecretvalue(added) or issecretvalue(updated)
-                       or full or removed or added or updated then
-                        ns._acGen = (ns._acGen or 0) + 1
-                    end
                 end
             end
             if not _btTicker then
