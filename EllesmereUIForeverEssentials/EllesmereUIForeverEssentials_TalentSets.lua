@@ -93,6 +93,10 @@ end
 
 -------------------------------------------------------------------------------
 --  Cooldown Manager layouts (the game's own)
+--  A switch from addon code taints the game's Cooldown Manager until a
+--  reload: its items then error on every cooldown and aura update. Its
+--  layout choice lives only in Lua tables it reads back, so no call from an
+--  addon avoids this. Every switch offers a reload.
 -------------------------------------------------------------------------------
 -- nil until the game has loaded its layouts.
 local function LayoutManager()
@@ -138,6 +142,14 @@ local function SwitchLayout(id)
     if cdm and cdm.RebuildForTalentSetLayout then
         C_Timer.After(0, cdm.RebuildForTalentSetLayout)
     end
+    -- A confirm, not RequestReload: an event cannot reload, its click can.
+    EllesmereUI:ShowConfirmPopup({
+        title       = EllesmereUI.L("Reload Required"),
+        message     = EllesmereUI.L("The Cooldown Manager layout was switched. Reload so its cooldowns and buffs update."),
+        confirmText = EllesmereUI.L("Reload Now"),
+        cancelText  = EllesmereUI.L("Later"),
+        reload      = true,
+    })
 end
 
 -------------------------------------------------------------------------------

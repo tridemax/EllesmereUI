@@ -390,7 +390,7 @@ _G._EUI_BuildForeverGeneralPage = function(pageName, parent, yOffset)
 
         _, h = W:DualRow(parent, y,
             { type = "toggle", text = "Talent Set Bindings",
-              tooltip = "When you switch between primary and secondary talents, equips the gear set and switches to the Cooldown Manager layout picked below for the new set. Each character picks its own. If buffs stop updating while EllesmereUI Cooldown Manager is disabled, use /reload.",
+              tooltip = "When you switch between primary and secondary talents, equips the gear set and switches to the Cooldown Manager layout picked below for the new set. Each character picks its own.",
               getValue = function() return TS.Get("enabled") end,
               setValue = function(v)
                   TS.Cfg().enabled = v
@@ -410,8 +410,8 @@ _G._EUI_BuildForeverGeneralPage = function(pageName, parent, yOffset)
             GearDD(2, "Secondary Gear Set", "The Equipment Manager set equipped when you switch to your secondary talents.")
         );  y = y - h
         layRow, h = W:DualRow(parent, y,
-            LayoutDD(1, "Primary CDM Layout", "The Cooldown Manager layout selected when you switch to your primary talents."),
-            LayoutDD(2, "Secondary CDM Layout", "The Cooldown Manager layout selected when you switch to your secondary talents.")
+            LayoutDD(1, "Primary CDM Layout", "The Cooldown Manager layout switched to when you switch to your primary talents. Each switch asks for a reload so the bars update."),
+            LayoutDD(2, "Secondary CDM Layout", "The Cooldown Manager layout switched to when you switch to your secondary talents. Each switch asks for a reload so the bars update.")
         );  y = y - h
         if not EllesmereUI._prebuilding then
             gearAttach(gearRow._leftRegion._control)
